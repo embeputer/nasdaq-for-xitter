@@ -16,10 +16,15 @@ export function readEnv(name: string): string {
   return fileValues.get(name) ?? ''
 }
 
+/** Hosts with no durable disk. Local `npm run dev` is false. */
+export function ephemeralHost(): boolean {
+  return Boolean(process.env.VERCEL || process.env.NETLIFY)
+}
+
 export function sessionSecret(): string {
   const configured = readEnv('SESSION_SECRET')
   if (configured) return configured
-  if (process.env.VERCEL) return ''
+  if (ephemeralHost()) return ''
   const path = '.data/session-secret'
   try {
     return strip(readFileSync(path, 'utf8'))

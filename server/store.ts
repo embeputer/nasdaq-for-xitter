@@ -1,6 +1,7 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { fileBuy, type Fill, type Order, type Position } from './book.ts'
+import { ephemeralHost } from './env.ts'
 
 export type PaymentStatus = 'processing' | 'filled' | 'refunded' | 'pending_refund' | 'pending_fill' | 'skipped' | 'donated'
 
@@ -214,7 +215,7 @@ export function store(): Promise<Store> {
 
 export function durableStorage(): boolean {
   if (process.env.POSTGRES_URL || process.env.DATABASE_URL) return true
-  return !process.env.VERCEL
+  return !ephemeralHost()
 }
 
 async function openStore(): Promise<Store> {

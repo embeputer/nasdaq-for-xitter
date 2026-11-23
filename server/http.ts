@@ -17,7 +17,7 @@ import {
   signValue,
   verifyValue,
 } from './oauth.ts'
-import { readEnv } from './env.ts'
+import { ephemeralHost, readEnv } from './env.ts'
 import { durableStorage, store as openLedger, type SessionUser } from './store.ts'
 import { searchPeople } from './xitter.ts'
 
@@ -294,7 +294,7 @@ function cronAllowed(req: IncomingMessage): boolean {
   const secret = readEnv('CRON_SECRET')
   const header = req.headers.authorization ?? ''
   if (secret && header === `Bearer ${secret}`) return true
-  return !process.env.VERCEL
+  return !ephemeralHost()
 }
 
 function send(res: ServerResponse, status: number, body: unknown, cookies: string[] = []) {
