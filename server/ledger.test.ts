@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { fileBuy, fileClose } from './book.ts'
 import { ingest } from './ingest.ts'
-import { adminNames, idempotencyKey, parseActivity, type Desk, type IncomingPayment } from './money.ts'
+import { ACTIVITY_LIMIT, adminNames, idempotencyKey, parseActivity, type Desk, type IncomingPayment } from './money.ts'
 import { pkcePair } from './oauth.ts'
 import { queriesFromNote, REFUND_NOTE, resolveNote } from './resolve.ts'
 import { memoryStore } from './store.ts'
@@ -132,6 +132,35 @@ describe('ingest', () => {
     const fourth = await run([payment('3', 'NVDA', 5000)])
     expect(fourth.filled).toBe(0)
     expect((await ledger.positions())[0]?.qty).toBe(2)
+  })
+
+  it('keeps only the newest 10 payments in a run', async () => {
+    const ledger = memoryStore()
+    let calls = 0
+    const rows = Array.from({ length: 12 }, (_, index) => payment(String(index + 1), 'NVDA'))
+    await ingest({
+      store: ledger,
+      desks: [desk],
+      now: 10,
+      activity: async (_token, cursor) => {
+        calls += 1
+        expect(cursor).toBeNull()
+        return { payments: rows, next: 'more' }
+      },
+      resolve: async () => ({ id: 'stock:NVDA', venue: 'stock', symbol: 'NVDA', label: 'NVDA', name: 'NVIDIA' }),
+      quote: async () => 25,
+      refund: async () => {
+        throw new Error('no refund')
+      },
+    })
+    expect(calls).toBe(1)
+    expect(ACTIVITY_LIMIT).toBe(10)
+    const stored: string[] = []
+    for (const row of rows) {
+      if (await ledger.payment(row.id)) stored.push(row.id)
+    }
+    expect(stored).toEqual(rows.slice(0, 10).map((row) => row.id))
+    expect(await ledger.positions()).toHaveLength(0)
   })
 })
 

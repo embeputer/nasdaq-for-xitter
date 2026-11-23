@@ -72,9 +72,11 @@ export function parseActivity(body: unknown): { payments: IncomingPayment[]; nex
   return { payments: rows.flatMap(parsePayment), next }
 }
 
+export const ACTIVITY_LIMIT = 10
+
 export async function fetchActivity(token: string, cursor: string | null): Promise<{ payments: IncomingPayment[]; next: string | null }> {
   const url = new URL('/api/v1/money/activity', XITTER_ORIGIN)
-  url.searchParams.set('limit', '50')
+  url.searchParams.set('limit', String(ACTIVITY_LIMIT))
   if (cursor) url.searchParams.set('cursor', cursor)
   const res = await xitterFetch(token, url)
   if (!res.ok) throw new Error(`activity_${res.status}`)

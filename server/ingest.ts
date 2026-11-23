@@ -1,6 +1,6 @@
 import type { Person } from './book.ts'
 import { getQuotes, type Listing } from './market.ts'
-import { fetchActivity, loadDesks, sendRefund, type Desk, type IncomingPayment } from './money.ts'
+import { ACTIVITY_LIMIT, fetchActivity, loadDesks, sendRefund, type Desk, type IncomingPayment } from './money.ts'
 import { REFUND_NOTE, resolveNote } from './resolve.ts'
 import { store as openLedger, type PaymentRow, type Store } from './store.ts'
 
@@ -138,17 +138,13 @@ function rowFrom(payment: IncomingPayment, desk: string, status: PaymentRow['sta
 }
 
 async function collect(token: string, activity: ActivityFn, known: Store | null): Promise<IncomingPayment[]> {
+  const next = await activity(token, null)
+  const page = next.payments.slice(0, ACTIVITY_LIMIT)
+  if (!known) return page
   const out: IncomingPayment[] = []
-  let cursor: string | null = null
-  for (let page = 0; page < 20; page += 1) {
-    const next = await activity(token, cursor)
-    let seen = false
-    for (const payment of next.payments) {
-      if (known && (await known.payment(payment.id))) seen = true
-      else out.push(payment)
-    }
-    if (!next.next || (known && seen)) break
-    cursor = next.next
+  for (const payment of page) {
+    if (await known.payment(payment.id)) continue
+    out.push(payment)
   }
   return out
 }
