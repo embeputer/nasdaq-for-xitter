@@ -1,6 +1,7 @@
 import { searchMarket, type Listing, type Venue } from './market.ts'
 
-export const REFUND_NOTE = "Sorry, i couldn't find that! Make sure you specify an available stock, crypto coin, or perpetual market."
+export const REFUND_NOTE =
+  'Sorry, i couldn\'t find that! Make sure you specify an available stock, crypto, or perpetual market. If donating, enter "donate" in the note.'
 
 const SKIP = new Set([
   'a',

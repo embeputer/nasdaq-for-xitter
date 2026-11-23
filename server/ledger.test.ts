@@ -24,7 +24,7 @@ describe('admins', () => {
 describe('refund note', () => {
   it('uses the desk wording and fits the Equicoin note limit', () => {
     expect(REFUND_NOTE).toBe(
-      "Sorry, i couldn't find that! Make sure you specify an available stock, crypto coin, or perpetual market.",
+      'Sorry, i couldn\'t find that! Make sure you specify an available stock, crypto, or perpetual market. If donating, enter "donate" in the note.',
     )
     expect(REFUND_NOTE.length).toBeLessThanOrEqual(140)
     expect(queriesFromNote(REFUND_NOTE)).toEqual([])
