@@ -23,7 +23,10 @@ export default function App() {
 
   useEffect(() => {
     const hash = view === 'portfolio' ? '#portfolio' : '#discover'
-    if (window.location.hash !== hash) window.history.replaceState(null, '', hash)
+    const next = `${window.location.pathname}${window.location.search}${hash}`
+    if (`${window.location.pathname}${window.location.search}${window.location.hash}` !== next) {
+      window.history.replaceState(null, '', next)
+    }
   }, [view])
 
   useEffect(() => {
@@ -33,8 +36,21 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    const failed = new URLSearchParams(window.location.search).get('login')
-    if (failed) setNotice('Xitter sign-in did not finish.')
+    const params = new URLSearchParams(window.location.search)
+    if (params.get('login')) {
+      const step = params.get('step')
+      const detail =
+        step === 'cookie'
+          ? 'The login cookie did not come back.'
+          : step === 'token'
+            ? 'Xitter rejected the login code.'
+            : step === 'profile'
+              ? 'Xitter did not return the profile.'
+              : step === 'book'
+                ? 'The session did not save.'
+                : ''
+      setNotice(detail ? `Xitter sign-in did not finish. ${detail}` : 'Xitter sign-in did not finish.')
+    }
     void fetchSession().then(setViewer)
   }, [])
 

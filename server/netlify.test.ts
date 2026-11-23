@@ -2,7 +2,7 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { beforeAll, describe, expect, it } from 'vitest'
-import { signValue } from './oauth.ts'
+import { signValue, storedVerifier } from './oauth.ts'
 import { apiPath, handleRequest } from './netlify.ts'
 import { durableStorage, store } from './store.ts'
 
@@ -17,6 +17,16 @@ beforeAll(async () => {
     avatarUrl: null,
     accessToken: 'tok',
     expiresAt: Date.now() + 60_000,
+  })
+})
+
+describe('stored pkce', () => {
+  it('accepts a fresh verifier and rejects a stale one', () => {
+    const now = 1_000_000
+    const verifier = 'a'.repeat(43)
+    expect(storedVerifier(`${verifier}.${now - 1000}`, now)).toBe(verifier)
+    expect(storedVerifier(`${verifier}.${now - 11 * 60 * 1000}`, now)).toBe('')
+    expect(storedVerifier('', now)).toBe('')
   })
 })
 
@@ -65,13 +75,21 @@ describe('request adapter', () => {
       expect(res.status).toBe(303)
       expect(res.headers.get('location')).toContain('https://xitter.space/oauth/authorize?')
       expect(res.headers.getSetCookie().some((cookie) => cookie.startsWith('larp_pkce='))).toBe(true)
+      const state = new URL(res.headers.get('location') ?? '').searchParams.get('state') ?? ''
+      const saved = storedVerifier(await (await store()).meta(`pkce:${state}`), Date.now())
+      expect(saved.length).toBeGreaterThanOrEqual(43)
+      const callback = await handleRequest(
+        new Request(`https://nasdaq.test/api/oauth/callback?code=${'a'.repeat(43)}&state=${state}`),
+      )
+      expect(callback.status).toBe(303)
+      expect(callback.headers.get('location')).toContain('step=token')
     } finally {
       if (previousClient === undefined) delete process.env.XITTER_CLIENT_ID
       else process.env.XITTER_CLIENT_ID = previousClient
       if (previousOrigin === undefined) delete process.env.APP_ORIGIN
       else process.env.APP_ORIGIN = previousOrigin
     }
-  })
+  }, 20_000)
 
   it('locks the cron route on Netlify unless the bearer matches', async () => {
     const previous = process.env.NETLIFY

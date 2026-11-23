@@ -15,6 +15,7 @@ import {
   publicOrigin,
   secureOrigin,
   signValue,
+  storedVerifier,
   verifyValue,
 } from './oauth.ts'
 import { ephemeralHost, readEnv } from './env.ts'
@@ -22,6 +23,7 @@ import { durableStorage, store as openLedger, type SessionUser } from './store.t
 import { searchPeople } from './xitter.ts'
 
 export async function handleApi(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  await ensureSessionSecret()
   const url = new URL(req.url ?? '/', 'http://localhost')
   const origin = publicOrigin(req)
   const secure = secureOrigin(origin)
@@ -149,6 +151,11 @@ async function startLogin(res: ServerResponse, origin: string, secure: boolean) 
     code_challenge: challenge,
     code_challenge_method: 'S256',
   })
+  try {
+    await (await openLedger()).setMeta(`pkce:${state}`, `${verifier}.${Date.now()}`)
+  } catch (error) {
+    console.error('pkce', error instanceof Error ? error.message : 'failed')
+  }
   redirect(res, `https://xitter.space/oauth/authorize?${params}`, [
     cookieHeader('larp_pkce', `${state}.${verifier}`, 600, secure),
   ])
@@ -156,18 +163,29 @@ async function startLogin(res: ServerResponse, origin: string, secure: boolean) 
 
 async function finishLogin(req: IncomingMessage, res: ServerResponse, url: URL, origin: string, secure: boolean) {
   const setup = oauthSetup(origin)
-  const failed = `${origin}/?login=failed#portfolio`
+  const failed = (step: string) => `${origin}/?login=failed&step=${step}#portfolio`
   if ('error' in setup) {
-    redirect(res, failed, [])
+    redirect(res, failed('setup'), [])
     return
   }
+  const code = url.searchParams.get('code') ?? ''
+  const queryState = url.searchParams.get('state') ?? ''
   const pkce = cookiesOf(req).larp_pkce ?? ''
   const split = pkce.indexOf('.')
-  const state = split >= 0 ? pkce.slice(0, split) : ''
-  const verifier = split >= 0 ? pkce.slice(split + 1) : ''
-  const code = url.searchParams.get('code') ?? ''
-  if (!code || !state || state !== (url.searchParams.get('state') ?? '') || !verifier) {
-    redirect(res, failed, [cookieHeader('larp_pkce', '', 0, secure)])
+  const cookieState = split >= 0 ? pkce.slice(0, split) : ''
+  const cookieVerifier = split >= 0 ? pkce.slice(split + 1) : ''
+  const ledger = await openLedger()
+  const saved = storedVerifier(queryState ? await ledger.meta(`pkce:${queryState}`) : null, Date.now())
+  if (queryState) {
+    try {
+      await ledger.setMeta(`pkce:${queryState}`, '')
+    } catch (error) {
+      console.error('pkce', error instanceof Error ? error.message : 'failed')
+    }
+  }
+  const verifier = cookieState === queryState && cookieVerifier ? cookieVerifier : saved
+  if (!code || !queryState || !verifier) {
+    redirect(res, failed('cookie'), [cookieHeader('larp_pkce', '', 0, secure)])
     return
   }
   try {
@@ -181,13 +199,13 @@ async function finishLogin(req: IncomingMessage, res: ServerResponse, url: URL, 
       accessToken,
       expiresAt: Date.now() + 30 * 24 * 3600 * 1000,
     }
-    await (await openLedger()).saveSession(session)
-    redirect(res, `${origin}/#portfolio`, [
-      cookieHeader('larp_session', signValue(session.id), 30 * 24 * 3600, secure),
-      cookieHeader('larp_pkce', '', 0, secure),
-    ])
-  } catch {
-    redirect(res, failed, [cookieHeader('larp_pkce', '', 0, secure)])
+    await ledger.saveSession(session)
+    redirect(res, `${origin}/#portfolio`, [cookieHeader('larp_session', signValue(session.id), 30 * 24 * 3600, secure)])
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'failed'
+    console.error('login', message)
+    const step = message.startsWith('me_') ? 'profile' : message.startsWith('token_') ? 'token' : 'book'
+    redirect(res, failed(step), [cookieHeader('larp_pkce', '', 0, secure)])
   }
 }
 
@@ -280,6 +298,23 @@ async function viewerFrom(req: IncomingMessage): Promise<(Person & { admin: bool
     name: session.name,
     avatarUrl: session.avatarUrl,
     admin: admins.has(session.screenName.toLowerCase()),
+  }
+}
+
+async function ensureSessionSecret() {
+  if (readEnv('SESSION_SECRET') || !ephemeralHost()) return
+  try {
+    const ledger = await openLedger()
+    const existing = await ledger.meta('session-secret')
+    if (existing) {
+      process.env.SESSION_SECRET = existing
+      return
+    }
+    const created = randomBytes(32).toString('hex')
+    await ledger.setMeta('session-secret', created)
+    process.env.SESSION_SECRET = (await ledger.meta('session-secret')) || created
+  } catch (error) {
+    console.error('session-secret', error instanceof Error ? error.message : 'failed')
   }
 }
 

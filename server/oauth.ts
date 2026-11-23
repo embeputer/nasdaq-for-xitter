@@ -2,6 +2,20 @@ import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypt
 import type { IncomingMessage } from 'node:http'
 import { readEnv, sessionSecret, UA, XITTER_ORIGIN } from './env.ts'
 
+const PKCE_TTL = 10 * 60 * 1000
+
+/** `verifier.timestamp` saved with the login, or empty when it is missing or stale. */
+export function storedVerifier(value: string | null, now: number): string {
+  if (!value) return ''
+  const split = value.lastIndexOf('.')
+  if (split <= 0) return ''
+  const verifier = value.slice(0, split)
+  const at = Number(value.slice(split + 1))
+  if (!/^[A-Za-z0-9_-]{43,128}$/.test(verifier)) return ''
+  if (!Number.isFinite(at) || at > now + 60_000 || now - at > PKCE_TTL) return ''
+  return verifier
+}
+
 export function pkcePair(): { verifier: string; challenge: string } {
   const verifier = randomBytes(32).toString('base64url')
   const challenge = createHash('sha256').update(verifier).digest('base64url')
