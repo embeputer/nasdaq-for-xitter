@@ -1,10 +1,10 @@
 import type { Person } from './book.ts'
 import { getQuotes, type Listing } from './market.ts'
 import { ACTIVITY_LIMIT, fetchActivity, loadDesks, sendRefund, type Desk, type IncomingPayment } from './money.ts'
-import { REFUND_NOTE, resolveNote } from './resolve.ts'
+import { isDonationNote, REFUND_NOTE, resolveNote } from './resolve.ts'
 import { store as openLedger, type PaymentRow, type Store } from './store.ts'
 
-export type IngestSummary = { filled: number; refunded: number; pending: number; skipped: number }
+export type IngestSummary = { filled: number; refunded: number; pending: number; skipped: number; donated: number }
 
 type ActivityFn = (token: string, cursor: string | null) => Promise<{ payments: IncomingPayment[]; next: string | null }>
 type RefundFn = (token: string, to: string, amountCents: number, paymentId: string) => Promise<void>
@@ -35,7 +35,7 @@ export async function runIngest(): Promise<IngestSummary> {
 }
 
 export async function ingest(deps: Deps): Promise<IngestSummary> {
-  const summary: IngestSummary = { filled: 0, refunded: 0, pending: 0, skipped: 0 }
+  const summary: IngestSummary = { filled: 0, refunded: 0, pending: 0, skipped: 0, donated: 0 }
   const touched = new Set<string>()
   for (const desk of deps.desks) {
     const boot = `bootstrapped:${desk.screenName.toLowerCase()}`
@@ -76,6 +76,10 @@ async function settle(deps: Deps, desk: Desk, draft: PaymentRow, sender: Person)
   if (sender.screenName.toLowerCase() === desk.screenName.toLowerCase()) return 'skipped'
   if (draft.note.trim() === REFUND_NOTE) return 'skipped'
   if ((await deps.store.takePayment(draft)) !== 'owned') return 'skipped'
+  if (isDonationNote(draft.note)) {
+    await deps.store.finishPayment({ ...draft, status: 'donated', detail: 'donation', updatedAt: deps.now })
+    return 'donated'
+  }
   const listing = storedListing(draft.detail) ?? (await deps.resolve(draft.note))
   if (!listing) {
     try {

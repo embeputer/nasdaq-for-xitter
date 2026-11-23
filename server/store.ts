@@ -2,7 +2,7 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { fileBuy, type Fill, type Order, type Position } from './book.ts'
 
-export type PaymentStatus = 'processing' | 'filled' | 'refunded' | 'pending_refund' | 'pending_fill' | 'skipped'
+export type PaymentStatus = 'processing' | 'filled' | 'refunded' | 'pending_refund' | 'pending_fill' | 'skipped' | 'donated'
 
 export type PaymentRow = {
   id: string
@@ -54,7 +54,7 @@ type Doc = {
   meta: Record<string, string>
 }
 
-const TERMINAL = new Set<PaymentStatus>(['filled', 'refunded', 'skipped'])
+const TERMINAL = new Set<PaymentStatus>(['filled', 'refunded', 'skipped', 'donated'])
 
 export function memoryStore(): Store {
   const doc = emptyDoc()

@@ -60,13 +60,33 @@ async function mapPool<T, R>(items: T[], limit: number, fn: (item: T) => Promise
   return out
 }
 
+const EVM_ADDRESS = /0x[a-fA-F0-9]{40}/
+const SOL_ADDRESS = /(?:^|[^1-9A-HJ-NP-Za-km-z])([1-9A-HJ-NP-Za-km-z]{32,44})(?=$|[^1-9A-HJ-NP-Za-km-z])/
+
+export function contractAddress(text: string): string | null {
+  const evm = text.match(EVM_ADDRESS)
+  if (evm) return evm[0].toLowerCase()
+  const sol = text.match(SOL_ADDRESS)
+  return sol?.[1] ?? null
+}
+
+export function isContractAddress(value: string): boolean {
+  const text = value.trim()
+  const found = contractAddress(text)
+  return !!found && (found === text || found === text.toLowerCase())
+}
+
 export function parseId(id: string): { venue: Venue; symbol: string } | null {
   const split = id.indexOf(':')
   if (split <= 0) return null
   const venue = id.slice(0, split)
   const symbol = id.slice(split + 1).trim()
-  if (!symbol || symbol.length > 32) return null
+  if (!symbol || symbol.length > 68) return null
   if (venue !== 'stock' && venue !== 'crypto' && venue !== 'perpetual') return null
+  if (venue === 'crypto' && isContractAddress(symbol)) {
+    const address = contractAddress(symbol)
+    return address ? { venue, symbol: address } : null
+  }
   if (venue === 'perpetual') {
     if (!/^[\w.:-]{1,32}$/.test(symbol)) return null
     return { venue, symbol }
@@ -299,12 +319,15 @@ export async function getQuotes(ids: string[]): Promise<Quote[]> {
   const stocks = parsed.filter((item) => item.venue === 'stock').map((item) => item.symbol)
   const crypto = parsed.filter((item) => item.venue === 'crypto').map((item) => item.symbol)
   const perps = parsed.filter((item) => item.venue === 'perpetual').map((item) => item.symbol)
-  const [equity, spot, futures] = await Promise.all([
+  const contracts = crypto.filter((symbol) => isContractAddress(symbol))
+  const pairs = crypto.filter((symbol) => !isContractAddress(symbol))
+  const [equity, spot, chain, futures] = await Promise.all([
     equityQuotes(stocks).catch(() => []),
-    bookTickers('https://api.binance.com/api/v3/ticker/24hr', crypto, 'crypto').catch(() => []),
+    bookTickers('https://api.binance.com/api/v3/ticker/24hr', pairs, 'crypto').catch(() => []),
+    contractQuotes(contracts).catch(() => []),
     hyperliquidQuotes(perps).catch(() => []),
   ])
-  return [...equity, ...spot, ...futures]
+  return [...equity, ...spot, ...chain, ...futures]
 }
 
 const RANGES: Record<Interval, { interval: string; range: string; binance: string }> = {
@@ -325,6 +348,7 @@ export async function getCandles(id: string, interval: Interval): Promise<Candle
   return cached(`c:${id}:${interval}`, 15000, async () => {
     if (parsed.venue === 'stock') return stockCandles(parsed.symbol, interval)
     if (parsed.venue === 'perpetual') return hyperliquidCandles(parsed.symbol, interval)
+    if (isContractAddress(parsed.symbol)) return []
     return bookCandles('https://api.binance.com/api/v3/klines', parsed.symbol, RANGES[interval].binance)
   })
 }
@@ -712,9 +736,29 @@ export function isTokenizedEquityBase(base: string): boolean {
   return /^[A-Z]{1,5}(?:B|X|ON)$/.test(asset)
 }
 
+async function coinNames(): Promise<Map<string, string>> {
+  const res = await fetch('https://www.binance.com/bapi/asset/v2/public/asset-service/product/get-products?includeEtf=true', {
+    headers: { 'user-agent': UA, accept: 'application/json' },
+    signal: AbortSignal.timeout(20000),
+  })
+  if (!res.ok) return new Map()
+  const body = (await res.json()) as { data?: Array<{ b?: string; q?: string; an?: string }> }
+  const names = new Map<string, string>()
+  for (const row of body.data ?? []) {
+    if (row.q !== 'USDT' || !row.b || !row.an) continue
+    const name = row.an.trim()
+    if (!name || name.toUpperCase() === row.b.toUpperCase()) continue
+    names.set(row.b.toUpperCase(), name)
+  }
+  return names
+}
+
 async function spotCatalog(): Promise<Listing[]> {
   return cached('catalog:spot', 60 * 60 * 1000, async () => {
-    const res = await fetch('https://api.binance.com/api/v3/exchangeInfo', { signal: AbortSignal.timeout(20000) })
+    const [res, names] = await Promise.all([
+      fetch('https://api.binance.com/api/v3/exchangeInfo', { signal: AbortSignal.timeout(20000) }),
+      coinNames().catch(() => new Map<string, string>()),
+    ])
     if (!res.ok) throw new Error(`Binance info ${res.status}`)
     const body = (await res.json()) as {
       symbols?: Array<{ symbol?: string; status?: string; baseAsset?: string; quoteAsset?: string }>
@@ -725,9 +769,67 @@ async function spotCatalog(): Promise<Listing[]> {
         if (row.quoteAsset !== 'USDT' && row.quoteAsset !== 'USDC') return []
         if (isTokenizedEquityBase(row.baseAsset)) return []
         const label = row.quoteAsset === 'USDC' ? `${row.baseAsset}-USDC` : row.baseAsset
-        return [listing('crypto', row.symbol, row.baseAsset, label)]
+        const name = names.get(row.baseAsset.toUpperCase()) || row.baseAsset
+        return [listing('crypto', row.symbol, name, label)]
       })
       .sort((a, b) => a.label.localeCompare(b.label))
+  })
+}
+
+type DexPair = {
+  priceUsd?: string
+  liquidity?: { usd?: number }
+  priceChange?: { h24?: number }
+  baseToken?: { address?: string; name?: string; symbol?: string }
+}
+
+async function contractHit(address: string): Promise<{ address: string; label: string; name: string; price: number; changePct: number } | null> {
+  return cached(`ca:${address}`, 10_000, async () => {
+    const res = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${address}`, {
+      headers: { 'user-agent': UA, accept: 'application/json' },
+      signal: AbortSignal.timeout(8000),
+    })
+    if (!res.ok) return null
+    const body = (await res.json()) as { pairs?: DexPair[] }
+    const best = (body.pairs ?? [])
+      .filter((pair) => {
+        const token = pair.baseToken?.address ?? ''
+        const same = address.startsWith('0x') ? token.toLowerCase() === address : token === address
+        const price = Number(pair.priceUsd)
+        return same && Number.isFinite(price) && price > 0
+      })
+      .sort((a, b) => (b.liquidity?.usd ?? 0) - (a.liquidity?.usd ?? 0))[0]
+    const token = best?.baseToken
+    const price = Number(best?.priceUsd)
+    if (!token?.symbol || !Number.isFinite(price)) return null
+    return {
+      address,
+      label: token.symbol.toUpperCase(),
+      name: token.name?.trim() || token.symbol.toUpperCase(),
+      price,
+      changePct: Number(best?.priceChange?.h24) || 0,
+    }
+  })
+}
+
+async function contractQuotes(addresses: string[]): Promise<Quote[]> {
+  const now = Date.now()
+  const rows = await mapPool(addresses, 4, (address) => contractHit(address))
+  return rows.flatMap((row) => {
+    if (!row) return []
+    return [
+      {
+        id: `crypto:${row.address}`,
+        venue: 'crypto' as const,
+        symbol: row.address,
+        name: row.name,
+        price: row.price,
+        change: (row.price * row.changePct) / 100,
+        changePct: row.changePct,
+        marketState: null,
+        asOf: now,
+      },
+    ]
   })
 }
 
@@ -851,14 +953,22 @@ async function stockSearch(query: string): Promise<Listing[]> {
 function rankListing(item: Listing, needle: string): number {
   const label = item.label.toLowerCase()
   const symbol = item.symbol.toLowerCase()
+  const name = item.name.toLowerCase()
   if (!needle) return 0
-  if (label === needle || symbol === needle) return 0
-  if (label.startsWith(needle) || symbol.startsWith(needle)) return 1
+  if (label === needle || symbol === needle || name === needle) return 0
+  if (label.startsWith(needle) || symbol.startsWith(needle) || name.startsWith(needle)) return 1
   return 2
 }
 
 export async function searchMarket(venue: Venue, query: string): Promise<Listing[]> {
-  const q = query.trim().slice(0, 40)
+  const raw = query.trim()
+  if (venue === 'crypto' && isContractAddress(raw)) {
+    const address = contractAddress(raw)
+    if (!address) return []
+    const hit = await contractHit(address).catch(() => null)
+    return hit ? [listing('crypto', hit.address, hit.name, hit.label)] : []
+  }
+  const q = raw.slice(0, 40)
   if (venue === 'stock') {
     if (q.length < 1) return []
     return cached(`search:stock:${q.toLowerCase()}`, 30000, () => stockSearch(q))

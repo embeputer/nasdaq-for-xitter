@@ -3,7 +3,7 @@ import { fileBuy, fileClose } from './book.ts'
 import { ingest } from './ingest.ts'
 import { ACTIVITY_LIMIT, adminNames, idempotencyKey, parseActivity, type Desk, type IncomingPayment } from './money.ts'
 import { pkcePair } from './oauth.ts'
-import { queriesFromNote, REFUND_NOTE, resolveNote } from './resolve.ts'
+import { pickListing, isDonationNote, queriesFromNote, REFUND_NOTE, resolveNote } from './resolve.ts'
 import { memoryStore } from './store.ts'
 import type { Listing } from './market.ts'
 
@@ -28,6 +28,12 @@ describe('refund note', () => {
     )
     expect(REFUND_NOTE.length).toBeLessThanOrEqual(140)
     expect(queriesFromNote(REFUND_NOTE)).toEqual([])
+    const gifts = ['donate', 'donation', 'TIP', 'for the fund', 'a gift', 'thanks for the charity', 'contribution']
+    expect(gifts.filter((note) => !isDonationNote(note))).toEqual([])
+    expect(isDonationNote('NVDA')).toBe(false)
+    expect(isDonationNote('tip NVDA')).toBe(false)
+    expect(isDonationNote('APPL')).toBe(false)
+    expect(isDonationNote(REFUND_NOTE)).toBe(false)
     expect(idempotencyKey('123456789')).toBe('refund-123456789')
   })
 })
@@ -51,6 +57,26 @@ describe('ticker notes', () => {
     expect((await resolveNote('BTC', search))?.id).toBe('crypto:BTCUSDT')
     expect((await resolveNote('BTC-PERP', search))?.id).toBe('perpetual:BTC')
     expect(await resolveNote('nope', search)).toBeNull()
+  })
+
+  it('resolves a company name, a coin name, and a contract address', async () => {
+    const usdc = '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48'
+    expect(queriesFromNote('Anthropic')).toEqual([{ venue: null, query: 'Anthropic' }])
+    expect(queriesFromNote('Bitcoin')).toEqual([{ venue: null, query: 'Bitcoin' }])
+    expect(queriesFromNote(usdc)).toEqual([{ venue: 'crypto', query: usdc }])
+    const listings: Listing[] = [
+      { id: 'stock:ANT', venue: 'stock', symbol: 'ANT', label: 'ANT', name: 'Anthropic, PBC Class A Common Stock' },
+      { id: 'stock:ANTW', venue: 'stock', symbol: 'ANTW', label: 'ANTW', name: 'Anthropic AI Lab Ecosystem ETF' },
+      { id: 'stock:BIXI', venue: 'stock', symbol: 'BIXI', label: 'BIXI', name: 'Bitcoin Infrastructure Acquisition Corp Ltd.' },
+      { id: 'crypto:BTCUSDT', venue: 'crypto', symbol: 'BTCUSDT', label: 'BTC', name: 'Bitcoin' },
+      { id: `crypto:${usdc}`, venue: 'crypto', symbol: usdc, label: 'USDC', name: 'USD Coin' },
+    ]
+    expect(pickListing(listings.filter((item) => item.venue === 'stock'), 'Anthropic', 'stock')?.symbol).toBe('ANT')
+    const search = async (venue: Listing['venue'], query: string) =>
+      listings.filter((item) => item.venue === venue && (item.symbol === query || `${item.symbol} ${item.name} ${item.label}`.toLowerCase().includes(query.toLowerCase())))
+    expect((await resolveNote('Anthropic', search))?.id).toBe('stock:ANT')
+    expect((await resolveNote('Bitcoin', search))?.id).toBe('crypto:BTCUSDT')
+    expect((await resolveNote(usdc, search))?.id).toBe(`crypto:${usdc}`)
   })
 })
 
@@ -160,6 +186,32 @@ describe('ingest', () => {
       if (await ledger.payment(row.id)) stored.push(row.id)
     }
     expect(stored).toEqual(rows.slice(0, 10).map((row) => row.id))
+    expect(await ledger.positions()).toHaveLength(0)
+  })
+
+  it('keeps a donation instead of refunding it', async () => {
+    const ledger = memoryStore()
+    let refunds = 0
+    const run = (rows: IncomingPayment[]) =>
+      ingest({
+        store: ledger,
+        desks: [desk],
+        now: 10,
+        activity: async () => ({ payments: rows, next: null }),
+        resolve: async () => {
+          throw new Error('donation notes are not searched')
+        },
+        quote: async () => 25,
+        refund: async () => {
+          refunds += 1
+        },
+      })
+    await run([payment('1', 'OLD')])
+    const result = await run([payment('1', 'OLD'), payment('2', 'thanks for the tip')])
+    expect(result.donated).toBe(1)
+    expect(result.refunded).toBe(0)
+    expect(refunds).toBe(0)
+    expect((await ledger.payment('2'))?.status).toBe('donated')
     expect(await ledger.positions()).toHaveLength(0)
   })
 })
