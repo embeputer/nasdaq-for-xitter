@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { equitySession, sessionFromMarketState, shownSession } from './session'
+import { equitySession, formatCountdown, sessionFromMarketState, sessionSchedule, shownSession } from './session'
 
 function ny(year: number, month: number, day: number, hour: number, minute: number): Date {
   const utc = new Date(Date.UTC(year, month - 1, day, hour, minute))
@@ -104,6 +104,27 @@ describe('equity session', () => {
     expect(sessionFromMarketState('CLOSED')).toBe('closed')
     expect(sessionFromMarketState(null)).toBeNull()
     expect(sessionFromMarketState('HALTED')).toBeNull()
+  })
+
+  it('counts down to each New York session in absolute time', () => {
+    const premarket = ny(2026, 11, 24, 8, 45)
+    const rows = sessionSchedule(premarket)
+    expect(rows.map((row) => [row.id, row.at.toISOString()])).toEqual([
+      ['pre', '2026-11-24T09:00:00.000Z'],
+      ['open', '2026-11-24T14:30:00.000Z'],
+      ['post', '2026-11-24T21:00:00.000Z'],
+      ['closed', '2026-11-25T01:00:00.000Z'],
+    ])
+    expect(formatCountdown(premarket, rows[0]!.at, true)).toBe('now')
+    expect(formatCountdown(premarket, rows[1]!.at, false)).toBe('in 45m')
+    const open = sessionSchedule(ny(2026, 11, 24, 10, 0))
+    expect(open.find((row) => row.id === 'pre')?.at.toISOString()).toBe('2026-11-25T09:00:00.000Z')
+    const early = sessionSchedule(ny(2026, 11, 27, 12, 0))
+    expect(early.find((row) => row.id === 'post')?.at.toISOString()).toBe('2026-11-27T18:00:00.000Z')
+    expect(early.find((row) => row.id === 'closed')?.at.toISOString()).toBe('2026-11-27T22:00:00.000Z')
+    const weekend = sessionSchedule(ny(2026, 11, 28, 12, 0))
+    expect(weekend.find((row) => row.id === 'open')?.at.toISOString()).toBe('2026-11-30T14:30:00.000Z')
+    expect(weekend.find((row) => row.id === 'closed')?.at.toISOString()).toBe('2026-11-27T22:00:00.000Z')
   })
 
   it('keeps a user stock open when the stock market is closed', () => {

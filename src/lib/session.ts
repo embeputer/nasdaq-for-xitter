@@ -171,6 +171,107 @@ export function equitySession(now: Date): EquitySession {
   return 'closed'
 }
 
+export type SessionWhen = { id: EquitySession; label: string; at: Date }
+
+const PHASES: EquitySession[] = ['pre', 'open', 'post', 'closed']
+
+function phaseMinute(id: EquitySession, early: boolean): number {
+  if (id === 'pre') return PRE
+  if (id === 'open') return OPEN
+  if (id === 'post') return early ? EARLY_CLOSE : CLOSE
+  return early ? EARLY_POST_END : POST_END
+}
+
+function nyInstant(day: string, minutes: number): Date {
+  const [year, month, date] = day.split('-').map(Number)
+  const hour = Math.floor(minutes / 60)
+  const minute = minutes % 60
+  const utc = new Date(Date.UTC(year, month - 1, date, hour, minute))
+  const bag: Record<string, string> = {}
+  for (const part of new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(utc)) {
+    if (part.type !== 'literal') bag[part.type] = part.value
+  }
+  let h = Number(bag.hour)
+  if (h === 24) h = 0
+  const asUtc = Date.UTC(Number(bag.year), Number(bag.month) - 1, Number(bag.day), h, Number(bag.minute), Number(bag.second))
+  return new Date(utc.getTime() - (asUtc - utc.getTime()))
+}
+
+function tradingDay(day: string): boolean {
+  const wall = nyWall(nyInstant(day, 12 * 60))
+  if (wall.weekday === 0 || wall.weekday === 6) return false
+  return !holidays(Number(day.slice(0, 4))).has(day)
+}
+
+function walkDay(day: string, dir: 1 | -1): string {
+  const noon = nyInstant(day, 12 * 60)
+  return nyWall(new Date(noon.getTime() + dir * 20 * 60 * 60 * 1000)).ymd
+}
+
+function onDay(id: EquitySession, day: string): Date {
+  const early = earlyCloses(Number(day.slice(0, 4))).has(day)
+  return nyInstant(day, phaseMinute(id, early))
+}
+
+function nextStart(id: EquitySession, now: Date): Date {
+  let day = nyWall(now).ymd
+  for (let i = 0; i < 14; i += 1) {
+    if (tradingDay(day)) {
+      const at = onDay(id, day)
+      if (at.getTime() > now.getTime()) return at
+    }
+    day = walkDay(day, 1)
+  }
+  return now
+}
+
+function currentStart(id: EquitySession, now: Date): Date {
+  if (id === 'closed') {
+    let day = nyWall(now).ymd
+    for (let i = 0; i < 14; i += 1) {
+      if (tradingDay(day)) {
+        const at = onDay(id, day)
+        if (at.getTime() <= now.getTime()) return at
+      }
+      day = walkDay(day, -1)
+    }
+    return now
+  }
+  const day = nyWall(now).ymd
+  return tradingDay(day) ? onDay(id, day) : nextStart(id, now)
+}
+
+/** Next time each session starts. The active one keeps the start that is already underway. */
+export function sessionSchedule(now: Date): SessionWhen[] {
+  const active = equitySession(now)
+  return PHASES.map((id) => ({
+    id,
+    label: SESSION_LABEL[id],
+    at: active === id ? currentStart(id, now) : nextStart(id, now),
+  }))
+}
+
+export function formatCountdown(now: Date, at: Date, active: boolean): string {
+  if (active) return 'now'
+  const minutes = Math.max(1, Math.round((at.getTime() - now.getTime()) / 60_000))
+  if (minutes < 60) return `in ${minutes}m`
+  const hours = Math.floor(minutes / 60)
+  const rest = minutes % 60
+  if (hours < 36) return rest ? `in ${hours}h ${rest}m` : `in ${hours}h`
+  const days = Math.floor(hours / 24)
+  const left = hours % 24
+  return left ? `in ${days}d ${left}h` : `in ${days}d`
+}
+
 /** Yahoo spark `marketState`. Unknown values fall through to the clock. */
 export function sessionFromMarketState(state: string | null | undefined): EquitySession | null {
   switch (state?.toUpperCase()) {

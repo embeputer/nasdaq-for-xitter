@@ -4,6 +4,7 @@ import { marketValue } from './lib/account'
 import { formatUsd } from './lib/format'
 import { equitySession, sessionFromMarketState, shownSession, type EquitySession } from './lib/session'
 import { Discover } from './components/Discover'
+import { SessionRibbon } from './components/SessionRibbon'
 import { LaunchForm } from './components/LaunchForm'
 import { Portfolio } from './components/Portfolio'
 import type { Candle, Interval, Position, Quote } from './types'
@@ -199,9 +200,7 @@ export default function App() {
           </p>
         </div>
       </header>
-      <p className={`session session-${ribbon.id}`} title={ribbon.title}>
-        {ribbon.label}
-      </p>
+      <SessionRibbon id={ribbon.id} label={ribbon.label} now={now} />
       </div>
       {viewer && launchOpen ? (
         <LaunchForm
