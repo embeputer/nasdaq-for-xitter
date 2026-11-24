@@ -112,9 +112,22 @@ img { display: block; }
 .snap {
   margin-left: auto;
   display: flex;
-  gap: 20px;
+  align-items: center;
+  gap: 12px;
   font-variant-numeric: tabular-nums;
 }
+.launch-open {
+  height: 32px;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.launch-open:hover { background: rgba(231, 233, 234, 0.1); }
 .snap p { margin: 0; display: grid; justify-items: end; }
 .snap span { color: var(--dim); font-size: 13px; }
 .snap strong { font-weight: 700; font-size: 15px; }
@@ -422,6 +435,54 @@ button:focus-visible {
   border-radius: 4px;
   padding: 12px;
 }
+.toast-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  background: rgba(0, 0, 0, 0.45);
+}
+.toast-card {
+  position: fixed;
+  top: 72px;
+  right: 16px;
+  z-index: 31;
+  width: min(380px, calc(100vw - 32px));
+  max-height: calc(100dvh - 96px);
+  overflow: auto;
+  padding: 16px;
+  background: #000;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+}
+.toast-card h2 { margin: 0 28px 4px 0; font-size: 20px; font-weight: 800; }
+.toast-x {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--dim);
+  font-size: 22px;
+  line-height: 1;
+}
+.toast-x:hover { background: rgba(231, 233, 234, 0.1); color: var(--ink); }
+.toast-card .hint { margin: 8px 0 0; }
+.toast-actions { display: flex; align-items: center; gap: 12px; }
+.toast-actions .invest { width: auto; flex: 1; margin-top: 0; }
+.toast-summary { margin: 12px 0 0; }
+.toast-summary div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+  font-variant-numeric: tabular-nums;
+}
+.toast-summary dt { color: var(--dim); }
+.toast-summary dd { margin: 0; font-weight: 700; }
 .mix ul { display: flex; flex-wrap: wrap; gap: 8px 16px; list-style: none; padding: 10px 0 0; margin: 0; }
 .mix li { display: flex; align-items: center; gap: 8px; color: var(--dim); font-size: 13px; }
 .mix i { width: 10px; height: 10px; border-radius: 999px; display: inline-block; }

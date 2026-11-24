@@ -116,6 +116,10 @@ type SparkMeta = {
   regularMarketPrice?: number
   chartPreviousClose?: number
   regularMarketChangePercent?: number
+  fulldayPrice?: number
+  fulldayChange?: number
+  fulldayChangePercent?: number
+  currentTradingPeriod?: { regular?: { start?: number; end?: number } }
   marketState?: string
 }
 
@@ -138,13 +142,36 @@ async function yahooFetch(pathname: string, params: Record<string, string>): Pro
   throw new Error(`Yahoo ${last || 'unreachable'}`)
 }
 
-function toQuote(symbol: string, meta: SparkMeta, now: number): Quote | null {
-  const price = meta.regularMarketPrice
-  if (price == null || !Number.isFinite(price)) return null
+// Outside the regular session, regularMarketPrice is the last close and does not tick.
+// fulldayPrice is the latest pre-market or after-hours trade.
+export function stockMark(meta: SparkMeta, now: number): { price: number; change: number; changePct: number } | null {
+  const regular = meta.regularMarketPrice
+  if (typeof regular !== 'number' || !Number.isFinite(regular)) return null
+  const session = meta.currentTradingPeriod?.regular
+  const start = session?.start
+  const end = session?.end
+  const open = typeof start === 'number' && typeof end === 'number' && now >= start * 1000 && now < end * 1000
+  const full = meta.fulldayPrice
+  const extended = !open && typeof full === 'number' && Number.isFinite(full) && full > 0
+  const price = extended ? full : regular
   const previous = meta.chartPreviousClose
-  const change = previous != null && previous !== 0 ? price - previous : 0
+  const change =
+    extended && typeof meta.fulldayChange === 'number' && Number.isFinite(meta.fulldayChange)
+      ? meta.fulldayChange
+      : previous != null && previous !== 0
+        ? price - previous
+        : 0
   const changePct =
-    meta.regularMarketChangePercent ?? (previous != null && previous !== 0 ? (change / previous) * 100 : 0)
+    extended && typeof meta.fulldayChangePercent === 'number' && Number.isFinite(meta.fulldayChangePercent)
+      ? meta.fulldayChangePercent
+      : (meta.regularMarketChangePercent ?? (previous != null && previous !== 0 ? (change / previous) * 100 : 0))
+  return { price, change, changePct }
+}
+
+function toQuote(symbol: string, meta: SparkMeta, now: number): Quote | null {
+  const mark = stockMark(meta, now)
+  if (!mark) return null
+  const { price, change, changePct } = mark
   return {
     id: `stock:${symbol}`,
     venue: 'stock',
@@ -350,7 +377,7 @@ export function isInterval(value: string): value is Interval {
 export async function getCandles(id: string, interval: Interval): Promise<Candle[]> {
   const parsed = parseId(id)
   if (!parsed) return []
-  return cached(`c:${id}:${interval}`, 15000, async () => {
+  return cached(`c:${id}:${interval}`, interval === '1m' ? 5000 : 15000, async () => {
     if (parsed.venue === 'stock') return stockCandles(parsed.symbol, interval)
     if (parsed.venue === 'perpetual') return hyperliquidCandles(parsed.symbol, interval)
     if (isContractAddress(parsed.symbol)) return []
@@ -394,6 +421,7 @@ async function yahooCandles(symbol: string, interval: Interval): Promise<Candle[
   const res = await yahooFetch(`/v8/finance/chart/${encodeURIComponent(symbol)}`, {
     interval: spec.interval,
     range: spec.range,
+    includePrePost: 'true',
   })
   const body = (await res.json()) as {
     chart?: {

@@ -4,6 +4,7 @@ import { marketValue } from './lib/account'
 import { formatUsd } from './lib/format'
 import { equitySession, SESSION_LABEL, sessionFromMarketState, type EquitySession } from './lib/session'
 import { Discover } from './components/Discover'
+import { LaunchForm } from './components/LaunchForm'
 import { Portfolio } from './components/Portfolio'
 import type { Candle, Interval, Position, Quote } from './types'
 
@@ -33,6 +34,7 @@ export default function App() {
   const [candles, setCandles] = useState<Candle[]>([])
   const [chartError, setChartError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  const [launchOpen, setLaunchOpen] = useState(false)
   const [now, setNow] = useState(() => new Date())
 
   useEffect(() => {
@@ -135,7 +137,7 @@ export default function App() {
         })
     }
     load()
-    const timer = window.setInterval(load, 20_000)
+    const timer = window.setInterval(load, interval === '1m' ? 8000 : 20_000)
     return () => {
       stop = true
       window.clearInterval(timer)
@@ -168,11 +170,19 @@ export default function App() {
         </nav>
         <div className="snap">
           {viewer ? (
+            <button type="button" className="launch-open" onClick={() => setLaunchOpen(true)}>
+              Launch a stock
+            </button>
+          ) : null}
+          {viewer ? (
             <button
               type="button"
               className="text-btn"
               onClick={() => {
-                void logout().then(() => setViewer(null))
+                void logout().then(() => {
+                  setViewer(null)
+                  setLaunchOpen(false)
+                })
               }}
             >
               @{viewer.screenName}
@@ -192,6 +202,16 @@ export default function App() {
         {SESSION_LABEL[session]}
       </p>
       </div>
+      {viewer && launchOpen ? (
+        <LaunchForm
+          nqfxCents={book.nqfxCents}
+          onClose={() => setLaunchOpen(false)}
+          onLaunched={() => {
+            setLaunchOpen(false)
+            void refresh()
+          }}
+        />
+      ) : null}
       {!book.durable ? <p className="hint durable">This deploy has no database, so positions will not stick. Set POSTGRES_URL.</p> : null}
       {notice ? <p className="hint durable">{notice}</p> : null}
       {view === 'discover' ? (
