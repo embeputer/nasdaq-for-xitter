@@ -30,6 +30,7 @@ import {
   setOpening,
   takePadding,
 } from './padding.ts'
+import { addScore, decideTag, deskVault, ensureScores, undoWithdraw, type Mention, type TagInput, type TagResult, type TradeDoc } from './tag.ts'
 import type { Candle, Interval, Listing, Quote } from './market.ts'
 
 export type PaymentStatus = 'processing' | 'filled' | 'refunded' | 'pending_refund' | 'pending_fill' | 'skipped' | 'donated' | 'vaulted'
@@ -104,6 +105,15 @@ export type Store = {
   payments(): Promise<PaymentRow[]>
   meta(key: string): Promise<string | null>
   setMeta(key: string, value: string): Promise<void>
+  mention(id: string): Promise<Mention | null>
+  seedMentions(rows: Mention[]): Promise<void>
+  openMentions(): Promise<Mention[]>
+  applyTag(input: TagInput): Promise<TagResult>
+  completeMention(id: string): Promise<void>
+  ackSend(id: string): Promise<void>
+  abortWithdraw(id: string): Promise<string>
+  vaultDesk(screenName: string, desk: string): Promise<number>
+  leaders(): Promise<{ person: Person; realizedCents: number }[]>
   session(id: string): Promise<SessionUser | null>
   saveSession(session: SessionUser): Promise<void>
   deleteSession(id: string): Promise<void>
@@ -116,6 +126,8 @@ type Doc = {
   vaults: Record<string, Vault>
   launches: Record<string, Launch>
   sessions: Record<string, SessionUser>
+  mentions: Record<string, Mention>
+  scores: Record<string, { person: Person; cents: number }>
   meta: Record<string, string>
 }
 
@@ -132,6 +144,8 @@ export function memoryStore(): Store {
       doc.vaults = next.vaults
       doc.launches = next.launches
       doc.sessions = next.sessions
+      doc.mentions = next.mentions
+      doc.scores = next.scores
       doc.meta = next.meta
     },
   )
@@ -157,6 +171,8 @@ export function fileStore(path: string): Store {
       doc.vaults = next.vaults
       doc.launches = next.launches
       doc.sessions = next.sessions
+      doc.mentions = next.mentions
+      doc.scores = next.scores
       doc.meta = next.meta
       writeDoc(path, doc)
     },
@@ -189,9 +205,14 @@ function storeFrom(
     },
     async updateBook(change) {
       await edit((doc) => {
+        ensureScores(doc)
         const next = change(doc.positions)
         doc.positions = next.positions
-        if (next.fill) doc.fills = [next.fill, ...doc.fills].slice(0, 400)
+        const fill = next.fill
+        if (fill && !doc.fills.some((item) => item.id === fill.id)) {
+          doc.fills = [fill, ...doc.fills].slice(0, 400)
+          addScore(doc, fill)
+        }
       })
     },
     async fillPayment(row, order) {
@@ -483,6 +504,55 @@ function storeFrom(
         doc.meta[key] = value
       })
     },
+    async mention(id) {
+      return read().mentions[id] ?? null
+    },
+    async seedMentions(rows) {
+      if (!rows.length) return
+      await edit((doc) => {
+        for (const row of rows) {
+          if (!doc.mentions[row.id]) doc.mentions[row.id] = row
+        }
+      })
+    },
+    async openMentions() {
+      return Object.values(read().mentions).filter((row) => row.status === 'reply' || row.status === 'sending')
+    },
+    async applyTag(input) {
+      let result: TagResult = { action: 'idle' }
+      await edit((doc) => {
+        result = decideTag(doc, input)
+      })
+      return result
+    },
+    async completeMention(id) {
+      await edit((doc) => {
+        const row = doc.mentions[id]
+        if (!row) return
+        doc.mentions[id] = { ...row, status: 'done', updatedAt: Date.now() }
+      })
+    },
+    async ackSend(id) {
+      await edit((doc) => {
+        const row = doc.mentions[id]
+        if (!row || row.status !== 'sending') return
+        doc.mentions[id] = { ...row, status: 'reply', updatedAt: Date.now() }
+      })
+    },
+    async abortWithdraw(id) {
+      let text = ''
+      await edit((doc) => {
+        text = undoWithdraw(doc, id, Date.now())
+      })
+      return text
+    },
+    async vaultDesk(screenName, desk) {
+      return deskVault(read(), screenName, desk)
+    },
+    async leaders() {
+      if (read().meta['scores-ready'] !== '1') await edit((doc) => ensureScores(doc))
+      return Object.values(read().scores).map((score) => ({ person: score.person, realizedCents: score.cents }))
+    },
     async session(id) {
       const found = read().sessions[id]
       if (!found) return null
@@ -549,6 +619,8 @@ async function postgresStore(url: string): Promise<Store> {
     create table if not exists larp_meta (key text primary key, value text not null);
     create table if not exists larp_vaults (id text primary key, body jsonb not null);
     create table if not exists larp_launches (id text primary key, body jsonb not null);
+    create table if not exists larp_mentions (id text primary key, body jsonb not null);
+    create table if not exists larp_scores (id text primary key, body jsonb not null);
   `
   const positions = async () => {
     const rows = await sql<{ body: Position }[]>`select body from larp_positions`
@@ -571,6 +643,126 @@ async function postgresStore(url: string): Promise<Store> {
       }
     })
   }
+  async function editTrade(change: (doc: TradeDoc) => void): Promise<void> {
+    await sql.begin(async (tx) => {
+      await tx`select pg_advisory_xact_lock(847211)`
+      const before = await readTrade()
+      const after = structuredClone(before)
+      change(after)
+      await writeTrade(before, after)
+
+      async function readTrade(): Promise<TradeDoc> {
+        const positionRows = await tx<{ body: Position }[]>`select body from larp_positions`
+        const fillRows = await tx<{ body: Fill }[]>`select body from larp_fills`
+        const paymentRows = await tx<{ body: PaymentRow }[]>`select body from larp_payments`
+        const vaultRows = await tx<{ id: string; body: Vault }[]>`select id, body from larp_vaults`
+        const launchRows = await tx<{ id: string; body: Launch }[]>`select id, body from larp_launches`
+        const mentionRows = await tx<{ body: Mention }[]>`select body from larp_mentions`
+        const scoreRows = await tx<{ id: string; body: { person: Person; cents: number } }[]>`select id, body from larp_scores`
+        const metaRows = await tx<{ key: string; value: string }[]>`select key, value from larp_meta`
+        const payments: TradeDoc['payments'] = {}
+        for (const row of paymentRows) payments[row.body.id] = row.body
+        const vaults: TradeDoc['vaults'] = {}
+        for (const row of vaultRows) vaults[row.id] = row.body
+        const launches: TradeDoc['launches'] = {}
+        for (const row of launchRows) launches[row.id] = row.body
+        const mentions: TradeDoc['mentions'] = {}
+        for (const row of mentionRows) mentions[row.body.id] = row.body
+        const scores: TradeDoc['scores'] = {}
+        for (const row of scoreRows) scores[row.id] = row.body
+        const meta: Record<string, string> = {}
+        for (const row of metaRows) meta[row.key] = row.value
+        return {
+          positions: positionRows.map((row) => row.body),
+          fills: fillRows.map((row) => row.body),
+          payments,
+          vaults,
+          launches,
+          mentions,
+          scores,
+          meta,
+        }
+      }
+
+      async function writeTrade(prev: TradeDoc, next: TradeDoc) {
+        if (JSON.stringify(prev.positions) !== JSON.stringify(next.positions)) {
+          await tx`delete from larp_positions`
+          for (const position of next.positions) {
+            await tx`insert into larp_positions (id, body) values (${position.id}, ${tx.json(position as never)})`
+          }
+        }
+        if (JSON.stringify(prev.fills) !== JSON.stringify(next.fills)) {
+          const kept = new Set(next.fills.map((fill) => fill.id))
+          for (const fill of prev.fills) {
+            if (!kept.has(fill.id)) await tx`delete from larp_fills where id = ${fill.id}`
+          }
+          const prior = new Map(prev.fills.map((fill) => [fill.id, fill]))
+          for (const fill of next.fills) {
+            if (JSON.stringify(prior.get(fill.id)) === JSON.stringify(fill)) continue
+            await tx`
+              insert into larp_fills (id, time, body) values (${fill.id}, ${fill.time}, ${tx.json(fill as never)})
+              on conflict (id) do update set time = excluded.time, body = excluded.body
+            `
+          }
+        }
+        for (const row of Object.values(next.payments)) {
+          if (JSON.stringify(prev.payments[row.id]) === JSON.stringify(row)) continue
+          await tx`
+            insert into larp_payments (id, status, updated_at, body)
+            values (${row.id}, ${row.status}, ${row.updatedAt}, ${tx.json(row as never)})
+            on conflict (id) do update set status = excluded.status, updated_at = excluded.updated_at, body = excluded.body
+          `
+        }
+        for (const [id, vault] of Object.entries(next.vaults)) {
+          if (JSON.stringify(prev.vaults[id]) === JSON.stringify(vault)) continue
+          await tx`
+            insert into larp_vaults (id, body) values (${id}, ${tx.json(vault as never)})
+            on conflict (id) do update set body = excluded.body
+          `
+        }
+        for (const id of Object.keys(prev.vaults)) {
+          if (!next.vaults[id]) await tx`delete from larp_vaults where id = ${id}`
+        }
+        for (const [id, launch] of Object.entries(next.launches)) {
+          if (JSON.stringify(prev.launches[id]) === JSON.stringify(launch)) continue
+          await tx`
+            insert into larp_launches (id, body) values (${id}, ${tx.json(launch as never)})
+            on conflict (id) do update set body = excluded.body
+          `
+        }
+        for (const id of Object.keys(prev.launches)) {
+          if (!next.launches[id]) await tx`delete from larp_launches where id = ${id}`
+        }
+        for (const mention of Object.values(next.mentions)) {
+          if (JSON.stringify(prev.mentions[mention.id]) === JSON.stringify(mention)) continue
+          await tx`
+            insert into larp_mentions (id, body) values (${mention.id}, ${tx.json(mention as never)})
+            on conflict (id) do update set body = excluded.body
+          `
+        }
+        for (const scoreId of Object.keys(prev.scores)) {
+          if (!next.scores[scoreId]) await tx`delete from larp_scores where id = ${scoreId}`
+        }
+        for (const [id, score] of Object.entries(next.scores)) {
+          if (JSON.stringify(prev.scores[id]) === JSON.stringify(score)) continue
+          await tx`
+            insert into larp_scores (id, body) values (${id}, ${tx.json(score as never)})
+            on conflict (id) do update set body = excluded.body
+          `
+        }
+        for (const [key, value] of Object.entries(next.meta)) {
+          if (prev.meta[key] === value) continue
+          await tx`
+            insert into larp_meta (key, value) values (${key}, ${value})
+            on conflict (key) do update set value = excluded.value
+          `
+        }
+        for (const key of Object.keys(prev.meta)) {
+          if (!(key in next.meta)) await tx`delete from larp_meta where key = ${key}`
+        }
+      }
+    })
+  }
   return {
     positions,
     async fills(limit) {
@@ -578,17 +770,14 @@ async function postgresStore(url: string): Promise<Store> {
       return rows.map((row) => row.body)
     },
     async updateBook(change) {
-      await sql.begin(async (tx) => {
-        await tx`select pg_advisory_xact_lock(847211)`
-        const rows = await tx<{ body: Position }[]>`select body from larp_positions`
-        const next = change(rows.map((row) => row.body))
-        await tx`delete from larp_positions`
-        for (const position of next.positions) {
-          await tx`insert into larp_positions (id, body) values (${position.id}, ${tx.json(position as never)})`
-        }
-        if (next.fill) {
-          await tx`insert into larp_fills (id, time, body) values (${next.fill.id}, ${next.fill.time}, ${tx.json(next.fill as never)}) on conflict (id) do nothing`
-          await tx`delete from larp_fills where id in (select id from larp_fills order by time desc offset 400)`
+      await editTrade((doc) => {
+        ensureScores(doc)
+        const next = change(doc.positions)
+        doc.positions = next.positions
+        const fill = next.fill
+        if (fill && !doc.fills.some((item) => item.id === fill.id)) {
+          doc.fills = [fill, ...doc.fills].slice(0, 400)
+          addScore(doc, fill)
         }
       })
     },
@@ -965,6 +1154,73 @@ async function postgresStore(url: string): Promise<Store> {
         on conflict (key) do update set value = excluded.value
       `
     },
+    async mention(id) {
+      const rows = await sql<{ body: Mention }[]>`select body from larp_mentions where id = ${id}`
+      return rows[0]?.body ?? null
+    },
+    async seedMentions(rows) {
+      if (!rows.length) return
+      await sql.begin(async (tx) => {
+        for (const row of rows) {
+          await tx`
+            insert into larp_mentions (id, body) values (${row.id}, ${tx.json(row as never)})
+            on conflict (id) do nothing
+          `
+        }
+      })
+    },
+    async openMentions() {
+      const rows = await sql<{ body: Mention }[]>`select body from larp_mentions where body->>'status' in ('reply', 'sending')`
+      return rows.map((row) => row.body)
+    },
+    async applyTag(input) {
+      let result: TagResult = { action: 'idle' }
+      await editTrade((doc) => {
+        result = decideTag(doc, input)
+      })
+      return result
+    },
+    async completeMention(id) {
+      await sql.begin(async (tx) => {
+        await tx`select pg_advisory_xact_lock(847211)`
+        const rows = await tx<{ body: Mention }[]>`select body from larp_mentions where id = ${id} for update`
+        const row = rows[0]?.body
+        if (!row) return
+        const next = { ...row, status: 'done' as const, updatedAt: Date.now() }
+        await tx`update larp_mentions set body = ${tx.json(next as never)} where id = ${id}`
+      })
+    },
+    async ackSend(id) {
+      await sql.begin(async (tx) => {
+        await tx`select pg_advisory_xact_lock(847211)`
+        const rows = await tx<{ body: Mention }[]>`select body from larp_mentions where id = ${id} for update`
+        const row = rows[0]?.body
+        if (!row || row.status !== 'sending') return
+        const next = { ...row, status: 'reply' as const, updatedAt: Date.now() }
+        await tx`update larp_mentions set body = ${tx.json(next as never)} where id = ${id}`
+      })
+    },
+    async abortWithdraw(id) {
+      let text = ''
+      await editTrade((doc) => {
+        text = undoWithdraw(doc, id, Date.now())
+      })
+      return text
+    },
+    async vaultDesk(screenName, desk) {
+      const rows = await sql<{ body: Vault }[]>`select body from larp_vaults`
+      const vaults: TradeDoc['vaults'] = {}
+      rows.forEach((row, index) => {
+        vaults[`v${index}`] = row.body
+      })
+      return deskVault({ positions: [], fills: [], payments: {}, vaults, launches: {}, mentions: {}, scores: {}, meta: {} }, screenName, desk)
+    },
+    async leaders() {
+      const ready = await sql<{ value: string }[]>`select value from larp_meta where key = 'scores-ready'`
+      if (ready[0]?.value !== '1') await editTrade((doc) => ensureScores(doc))
+      const rows = await sql<{ body: { person: Person; cents: number } }[]>`select body from larp_scores`
+      return rows.map((row) => ({ person: row.body.person, realizedCents: row.body.cents }))
+    },
     async session(id) {
       const rows = await sql<{ body: SessionUser }[]>`select body from larp_sessions where id = ${id} and expires_at > ${Date.now()}`
       return rows[0]?.body ?? null
@@ -990,7 +1246,7 @@ function vaultRecords(doc: Doc, screenName: string): { key: string; desks: Recor
 }
 
 function emptyDoc(): Doc {
-  return { positions: [], fills: [], payments: {}, vaults: {}, launches: {}, sessions: {}, meta: {} }
+  return { positions: [], fills: [], payments: {}, vaults: {}, launches: {}, sessions: {}, mentions: {}, scores: {}, meta: {} }
 }
 
 function readDoc(path: string): Doc {
@@ -1003,6 +1259,8 @@ function readDoc(path: string): Doc {
       vaults: parsed.vaults ?? {},
       launches: parsed.launches ?? {},
       sessions: parsed.sessions ?? {},
+      mentions: parsed.mentions ?? {},
+      scores: parsed.scores ?? {},
       meta: parsed.meta ?? {},
     }
   } catch {

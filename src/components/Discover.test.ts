@@ -2,6 +2,7 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import { Discover, shortName } from './Discover.tsx'
+import { Leaderboard } from './Leaderboard.tsx'
 import type { Position } from '../types'
 
 const person = {
@@ -92,5 +93,37 @@ describe('chart heading', () => {
     expect(nameLine).toContain('https://xitter.space/Rayman')
     expect(nameLine).toContain('@Rayman')
     expect(html).toContain('Rayman · xitRAYMAN')
+    expect(html).not.toContain('names board')
+  })
+})
+
+describe('P&L tab', () => {
+  it('ranks open and realized P&L and hides an empty board', () => {
+    const empty = renderToStaticMarkup(createElement(Leaderboard, { positions: [], quotes: {}, scores: [] }))
+    expect(empty).toBe('')
+    const html = renderToStaticMarkup(
+      createElement(Leaderboard, {
+        positions: [ant],
+        quotes: {
+          'stock:ANT': {
+            id: 'stock:ANT',
+            venue: 'stock',
+            symbol: 'ANT',
+            name: ant.name,
+            price: 100,
+            change: 0,
+            changePct: 0,
+            marketState: null,
+            asOf: 1,
+          },
+        },
+        scores: [{ person: { id: '2', screenName: 'yams', name: 'Yams', avatarUrl: null }, realizedCents: -500 }],
+      }),
+    )
+    expect(html.indexOf('https://xitter.space/z1xus')).toBeLessThan(html.indexOf('https://xitter.space/yams'))
+    expect(html).toContain('class="up"')
+    expect(html).toContain('class="down"')
+    expect(html).toContain('names board')
+    expect(html).not.toContain('https://xitter.space/@')
   })
 })

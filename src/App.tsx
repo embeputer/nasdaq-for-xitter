@@ -4,6 +4,7 @@ import { marketValue } from './lib/account'
 import { formatUsd } from './lib/format'
 import { equitySession, sessionFromMarketState, shownSession, type EquitySession } from './lib/session'
 import { Discover } from './components/Discover'
+import { Leaderboard } from './components/Leaderboard'
 import { SessionRibbon } from './components/SessionRibbon'
 import { LaunchForm } from './components/LaunchForm'
 import { Portfolio } from './components/Portfolio'
@@ -21,14 +22,16 @@ function liveSession(quotes: Record<string, Quote>, selected: Position | null, n
   return equitySession(now)
 }
 
-function viewFromLocation(): 'discover' | 'portfolio' {
-  return window.location.hash === '#portfolio' ? 'portfolio' : 'discover'
+function viewFromLocation(): 'discover' | 'pnl' | 'portfolio' {
+  if (window.location.hash === '#portfolio') return 'portfolio'
+  if (window.location.hash === '#pnl') return 'pnl'
+  return 'discover'
 }
 
 export default function App() {
-  const [view, setView] = useState<'discover' | 'portfolio'>(viewFromLocation)
+  const [view, setView] = useState<'discover' | 'pnl' | 'portfolio'>(viewFromLocation)
   const [viewer, setViewer] = useState<Viewer | null>(null)
-  const [book, setBook] = useState<Book>({ positions: [], fills: [], desks: [], durable: true, nqfxCents: 0 })
+  const [book, setBook] = useState<Book>({ positions: [], fills: [], desks: [], durable: true, nqfxCents: 0, scores: [] })
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [quotes, setQuotes] = useState<Record<string, Quote>>({})
   const [candles, setCandles] = useState<Candle[]>([])
@@ -43,7 +46,7 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    const hash = view === 'portfolio' ? '#portfolio' : '#discover'
+    const hash = view === 'portfolio' ? '#portfolio' : view === 'pnl' ? '#pnl' : '#discover'
     const next = `${window.location.pathname}${window.location.search}${hash}`
     if (`${window.location.pathname}${window.location.search}${window.location.hash}` !== next) {
       window.history.replaceState(null, '', next)
@@ -114,7 +117,7 @@ export default function App() {
       })
     }
     load()
-    const timer = window.setInterval(load, view === 'discover' ? 2000 : 4000)
+    const timer = window.setInterval(load, view === 'portfolio' ? 4000 : 2000)
     return () => {
       stop = true
       window.clearInterval(timer)
@@ -164,6 +167,9 @@ export default function App() {
         <nav>
           <button type="button" aria-current={view === 'discover' ? 'page' : undefined} onClick={() => setView('discover')}>
             Discover
+          </button>
+          <button type="button" aria-current={view === 'pnl' ? 'page' : undefined} onClick={() => setView('pnl')}>
+            P&L
           </button>
           <button type="button" aria-current={view === 'portfolio' ? 'page' : undefined} onClick={() => setView('portfolio')}>
             Portfolio
@@ -224,6 +230,8 @@ export default function App() {
           candles={candles}
           chartError={chartError}
         />
+      ) : view === 'pnl' ? (
+        <Leaderboard positions={book.positions} quotes={quotes} scores={book.scores} />
       ) : (
         <Portfolio
           viewer={viewer}

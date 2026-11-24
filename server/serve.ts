@@ -66,9 +66,9 @@ function tick() {
   ticking = true
   void runIngest()
     .then((summary) => {
-      if (summary.filled || summary.refunded || summary.pending || summary.vaulted) {
+      if (summary.filled || summary.refunded || summary.pending || summary.vaulted || summary.tagged) {
         console.log(
-          `ingest filled=${summary.filled} refunded=${summary.refunded} pending=${summary.pending} vaulted=${summary.vaulted}`,
+          `ingest filled=${summary.filled} refunded=${summary.refunded} pending=${summary.pending} vaulted=${summary.vaulted} tagged=${summary.tagged}`,
         )
       }
     })

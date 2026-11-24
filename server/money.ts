@@ -208,6 +208,49 @@ export async function findPerson(screenName: string): Promise<Person | null> {
   return null
 }
 
+export const MENTION_LIMIT = 10
+
+export type MentionPost = { id: string; text: string; author: Person }
+
+export function parseMentions(body: unknown): MentionPost[] {
+  if (!body || typeof body !== 'object') return []
+  const record = body as { data?: unknown }
+  const rows = Array.isArray(record.data) ? record.data : []
+  const out: MentionPost[] = []
+  for (const row of rows) {
+    if (!row || typeof row !== 'object') continue
+    const item = row as Record<string, unknown>
+    const id = text(item.id) || (typeof item.id === 'number' && Number.isSafeInteger(item.id) ? String(item.id) : '')
+    const author = personFrom(item.author)
+    if (!id || !author) continue
+    const rawId = item.author && typeof item.author === 'object' ? (item.author as Record<string, unknown>).id : undefined
+    if (typeof rawId === 'number' && Number.isSafeInteger(rawId)) author.id = String(rawId)
+    out.push({ id, text: typeof item.text === 'string' ? item.text : '', author })
+  }
+  return out
+}
+
+export async function fetchMentions(token: string, desk: string): Promise<MentionPost[]> {
+  const handle = desk.trim().replace(/^@/, '')
+  if (!token || !handle) return []
+  const url = new URL('/api/v1/search/posts', XITTER_ORIGIN)
+  url.searchParams.set('q', `@${handle}`)
+  url.searchParams.set('limit', String(MENTION_LIMIT))
+  const res = await xitterFetch(token, url)
+  if (!res.ok) throw new Error(`mentions_${res.status}`)
+  return parseMentions(await res.json()).slice(0, MENTION_LIMIT)
+}
+
+export async function replyToPost(token: string, postId: string, text: string): Promise<void> {
+  if (!token) throw named('ReadOnlyToken', 'missing_write_token')
+  const res = await xitterFetch(token, new URL('/api/v1/posts', XITTER_ORIGIN), {
+    method: 'POST',
+    body: JSON.stringify({ text, reply_to: postId }),
+  })
+  if (res.status === 403) throw named('ReadOnlyToken', 'read_only')
+  if (!res.ok) throw new Error(`reply_${res.status}`)
+}
+
 function parsePayment(row: unknown): IncomingPayment[] {
   if (!row || typeof row !== 'object') return []
   const record = row as Record<string, unknown>

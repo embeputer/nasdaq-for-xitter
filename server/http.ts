@@ -116,6 +116,7 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse): Prom
         desks,
         durable: durableStorage(),
         nqfxCents: viewer ? await ledger.vaultCents(viewer.screenName) : 0,
+        scores: await ledger.leaders(),
       })
       return
     }
