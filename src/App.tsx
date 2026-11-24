@@ -36,6 +36,7 @@ export default function App() {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [quotes, setQuotes] = useState<Record<string, Quote>>({})
   const [candles, setCandles] = useState<Candle[]>([])
+  const [candleKey, setCandleKey] = useState('')
   const [chartError, setChartError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [launchOpen, setLaunchOpen] = useState(false)
@@ -100,6 +101,11 @@ export default function App() {
   }, [])
 
   const selected = book.positions.find((position) => position.id === selectedId) ?? book.positions[0] ?? null
+  const nextCandleKey = selected ? `${selected.venue}:${selected.symbol}` : ''
+  if (candleKey !== nextCandleKey) {
+    setCandleKey(nextCandleKey)
+    setCandles([])
+  }
   const quoteIds = useMemo(() => {
     const ids = book.positions.map((position) => `${position.venue}:${position.symbol}`)
     return [...new Set(ids)].slice(0, 40)

@@ -5,6 +5,10 @@ import { formatClock, formatPct, formatPrice, formatQty, formatUsd, pnlClass } f
 import { marketValue, openPnl } from '../lib/account'
 import type { Viewer } from '../lib/api'
 import type { Fill, Position, Quote } from '../types'
+
+function ownedBy(position: Position, screenName: string): boolean {
+  return position.person.screenName.toLowerCase() === screenName.toLowerCase()
+}
 import { AdminComposer } from './AdminComposer'
 
 export function Portfolio({
@@ -41,11 +45,12 @@ export function Portfolio({
     )
   }
 
-  const mine = viewer.admin
-    ? positions
-    : positions.filter((position) => position.person.screenName.toLowerCase() === viewer.screenName.toLowerCase())
-  const invested = mine.reduce((sum, position) => sum + marketValue(position, quotes[`${position.venue}:${position.symbol}`]?.price), 0)
-  const pnl = mine.reduce((sum, position) => sum + openPnl(position, quotes[`${position.venue}:${position.symbol}`]?.price), 0)
+  const account = viewer
+  const own = positions.filter((position) => ownedBy(position, account.screenName))
+  const listed = viewer.admin ? positions.filter((position) => !ownedBy(position, viewer.screenName)) : own
+  const counted = viewer.admin ? positions : own
+  const invested = counted.reduce((sum, position) => sum + marketValue(position, quotes[`${position.venue}:${position.symbol}`]?.price), 0)
+  const pnl = counted.reduce((sum, position) => sum + openPnl(position, quotes[`${position.venue}:${position.symbol}`]?.price), 0)
   const names = desks.length ? desks.map((desk) => `@${desk}`).join(' or ') : 'the desk'
   const pending = useRef(false)
   const [busy, setBusy] = useState(false)
@@ -69,6 +74,48 @@ export function Portfolio({
     }
   }
 
+  function renderHolding(position: Position) {
+    const price = quotes[`${position.venue}:${position.symbol}`]?.price
+    const gain = openPnl(position, price)
+    const pct = position.avgPrice > 0 && price ? ((price - position.avgPrice) / position.avgPrice) * 100 : 0
+    return (
+      <article key={position.id} className="holding">
+        <div>
+          <h3>
+            {position.label}
+            <span>{position.name}</span>
+          </h3>
+          <p className="who">
+            <AssetMark venue={position.venue} symbol={position.symbol} label={position.label} />
+            <span>
+              @{position.person.screenName}
+              <span className="class-tag">{VENUE_LABEL[position.venue]}</span>
+            </span>
+          </p>
+          <p className="meta">
+            {formatQty(position.qty)} @ {formatPrice(position.avgPrice, position.venue)}
+          </p>
+        </div>
+        <div className="holding-end">
+          <strong>{formatUsd(marketValue(position, price))}</strong>
+          <em className={pnlClass(gain)}>
+            {formatUsd(gain, true)} {formatPct(pct)}
+          </em>
+          <div className="close-row">
+            <button type="button" className="close" disabled={busy} onClick={() => void close(position, true)}>
+              Close
+            </button>
+            {account.admin ? (
+              <button type="button" className="close" disabled={busy} onClick={() => void close(position, false)}>
+                Without cash
+              </button>
+            ) : null}
+          </div>
+        </div>
+      </article>
+    )
+  }
+
   return (
     <main className="sheet">
       <p className="value-label">{viewer.admin ? 'Every position' : 'Your book'}</p>
@@ -76,7 +123,7 @@ export function Portfolio({
       <div className="stats">
         <Stat label="Open P&L" value={formatUsd(pnl, true)} tone={pnlClass(pnl)} />
         <Stat label="Cash" value={formatUsd(nqfxCents / 100)} />
-        <Stat label="Positions" value={String(mine.length)} />
+        <Stat label="Positions" value={String(counted.length)} />
         <Stat label="Account" value={`@${viewer.screenName}`} />
         <Stat label="Role" value={viewer.admin ? 'Admin' : 'Member'} />
       </div>
@@ -86,52 +133,23 @@ export function Portfolio({
         </button>
         {viewer.admin ? <AdminComposer onOpened={onOpened} /> : null}
       </div>
+      {viewer.admin ? (
+        <section className="holdings">
+          <h2>Your positions</h2>
+          {own.length === 0 ? <p className="hint pad">No positions under your name.</p> : null}
+          {own.map(renderHolding)}
+        </section>
+      ) : null}
       <section className="holdings">
         <h2>{viewer.admin ? 'Book' : 'Positions'}</h2>
-        {mine.length === 0 ? (
-          <p className="hint pad">No open positions. Send Equicoins to {names} with the ticker in the note.</p>
+        {listed.length === 0 ? (
+          <p className="hint pad">
+            {positions.length === 0
+              ? `No open positions. Send Equicoins to ${names} with the ticker in the note.`
+              : 'No other open positions.'}
+          </p>
         ) : null}
-        {mine.map((position) => {
-          const price = quotes[`${position.venue}:${position.symbol}`]?.price
-          const gain = openPnl(position, price)
-          const pct = position.avgPrice > 0 && price ? ((price - position.avgPrice) / position.avgPrice) * 100 : 0
-          return (
-            <article key={position.id} className="holding">
-              <div>
-                <h3>
-                  {position.label}
-                  <span>{position.name}</span>
-                </h3>
-                <p className="who">
-                  <AssetMark venue={position.venue} symbol={position.symbol} label={position.label} />
-                  <span>
-                    @{position.person.screenName}
-                    <span className="class-tag">{VENUE_LABEL[position.venue]}</span>
-                  </span>
-                </p>
-                <p className="meta">
-                  {formatQty(position.qty)} @ {formatPrice(position.avgPrice, position.venue)}
-                </p>
-              </div>
-              <div className="holding-end">
-                <strong>{formatUsd(marketValue(position, price))}</strong>
-                <em className={pnlClass(gain)}>
-                  {formatUsd(gain, true)} {formatPct(pct)}
-                </em>
-                <div className="close-row">
-                  <button type="button" className="close" disabled={busy} onClick={() => void close(position, true)}>
-                    Close
-                  </button>
-                  {viewer.admin ? (
-                    <button type="button" className="close" disabled={busy} onClick={() => void close(position, false)}>
-                      Without cash
-                    </button>
-                  ) : null}
-                </div>
-              </div>
-            </article>
-          )
-        })}
+        {listed.map(renderHolding)}
       </section>
       {fills.length > 0 ? (
         <section className="fills">

@@ -2,10 +2,16 @@ import { ColorType, createChart, CandlestickSeries, type IChartApi, type ISeries
 import { useEffect, useRef } from 'react'
 import type { Candle, Quote } from '../types'
 
-export function ChartPane({ candles, quote }: { candles: Candle[]; quote: Quote | null }) {
+export function chartScaleAction(fittedId: string | null, seriesId: string, count: number): 'fit' | 'keep' | 'wait' {
+  if (fittedId === seriesId) return 'keep'
+  return count > 0 ? 'fit' : 'wait'
+}
+
+export function ChartPane({ candles, quote, seriesId }: { candles: Candle[]; quote: Quote | null; seriesId: string }) {
   const host = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null)
+  const fittedId = useRef<string | null>(null)
 
   useEffect(() => {
     const node = host.current
@@ -48,7 +54,10 @@ export function ChartPane({ candles, quote }: { candles: Candle[]; quote: Quote 
 
   useEffect(() => {
     const series = seriesRef.current
-    if (!series) return
+    const chart = chartRef.current
+    if (!series || !chart) return
+    const action = chartScaleAction(fittedId.current, seriesId, candles.length)
+    const range = action === 'keep' ? chart.timeScale().getVisibleLogicalRange() : null
     series.setData(
       candles.map((candle) => ({
         time: candle.time as UTCTimestamp,
@@ -58,8 +67,13 @@ export function ChartPane({ candles, quote }: { candles: Candle[]; quote: Quote 
         close: candle.close,
       })),
     )
-    chartRef.current?.timeScale().fitContent()
-  }, [candles])
+    if (action === 'fit') {
+      chart.timeScale().fitContent()
+      fittedId.current = seriesId
+      return
+    }
+    if (range && range.from <= range.to) chart.timeScale().setVisibleLogicalRange(range)
+  }, [candles, seriesId])
 
   useEffect(() => {
     const series = seriesRef.current
