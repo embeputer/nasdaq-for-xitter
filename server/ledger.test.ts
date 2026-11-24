@@ -74,16 +74,33 @@ describe('ticker notes', () => {
     expect(queriesFromNote('xYAMS')).toEqual([{ venue: null, query: 'xYAMS' }])
   })
 
-  it('prefers the stock, then the spot coin', async () => {
+  it('prefers a crypto ticker over a stock trust, and a company name over a coin', async () => {
     const listings: Listing[] = [
       { id: 'stock:ORCL', venue: 'stock', symbol: 'ORCL', label: 'ORCL', name: 'Oracle Corporation' },
+      { id: 'stock:BTC', venue: 'stock', symbol: 'BTC', label: 'BTC', name: 'Grayscale Bitcoin Mini Trust ETF' },
+      { id: 'stock:ETH', venue: 'stock', symbol: 'ETH', label: 'ETH', name: 'Grayscale Ethereum Mini Trust ETF' },
+      { id: 'stock:SOL', venue: 'stock', symbol: 'SOL', label: 'SOL', name: 'Solana Trust' },
+      { id: 'stock:DOGE', venue: 'stock', symbol: 'DOGE', label: 'DOGE', name: 'Dogecoin Trust' },
+      { id: 'stock:XRP', venue: 'stock', symbol: 'XRP', label: 'XRP', name: 'XRP Trust' },
+      { id: 'stock:NVDA', venue: 'stock', symbol: 'NVDA', label: 'NVDA', name: 'NVIDIA Corporation' },
       { id: 'crypto:BTCUSDT', venue: 'crypto', symbol: 'BTCUSDT', label: 'BTC', name: 'Bitcoin' },
+      { id: 'crypto:ETHUSDT', venue: 'crypto', symbol: 'ETHUSDT', label: 'ETH', name: 'Ethereum' },
+      { id: 'crypto:SOLUSDT', venue: 'crypto', symbol: 'SOLUSDT', label: 'SOL', name: 'Solana' },
+      { id: 'crypto:DOGEUSDT', venue: 'crypto', symbol: 'DOGEUSDT', label: 'DOGE', name: 'Dogecoin' },
+      { id: 'crypto:XRPUSDC', venue: 'crypto', symbol: 'XRPUSDC', label: 'XRP-USDC', name: 'XRP' },
       { id: 'perpetual:BTC', venue: 'perpetual', symbol: 'BTC', label: 'BTC-PERP', name: 'BTC' },
     ]
     const search = async (venue: Listing['venue'], query: string) =>
       listings.filter((item) => item.venue === venue && `${item.symbol} ${item.name} ${item.label}`.toLowerCase().includes(query.toLowerCase()))
     expect((await resolveNote('oracle', search))?.id).toBe('stock:ORCL')
+    expect((await resolveNote('NVDA', search))?.id).toBe('stock:NVDA')
     expect((await resolveNote('BTC', search))?.id).toBe('crypto:BTCUSDT')
+    expect((await resolveNote('ETH', search))?.id).toBe('crypto:ETHUSDT')
+    expect((await resolveNote('sol', search))?.id).toBe('crypto:SOLUSDT')
+    expect((await resolveNote('DOGE', search))?.id).toBe('crypto:DOGEUSDT')
+    expect((await resolveNote('XRP', search))?.id).toBe('crypto:XRPUSDC')
+    expect((await resolveNote('$BTC', search))?.id).toBe('stock:BTC')
+    expect((await resolveNote('stock:ETH', search))?.id).toBe('stock:ETH')
     expect(await resolveNote('BTC-PERP', search)).toBeNull()
     expect(await resolveNote('nope', search)).toBeNull()
   })

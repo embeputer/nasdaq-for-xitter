@@ -217,7 +217,16 @@ async function resolveQuery(item: NoteQuery, search: Search): Promise<Listing | 
   const [stocks, cryptos] = await Promise.all([search('stock', item.query), search('crypto', item.query)])
   const stockHit = pickListing(stocks, item.query, 'stock')
   const cryptoHit = pickListing(cryptos, item.query, 'crypto')
+  if (cryptoHit && isCryptoTicker(cryptoHit, item.query)) return cryptoHit
   const name = item.query.trim().toLowerCase()
   if (cryptoHit && cryptoHit.name.toLowerCase() === name && stockHit?.name.toLowerCase() !== name) return cryptoHit
   return stockHit ?? cryptoHit
+}
+
+function isCryptoTicker(hit: Listing, query: string): boolean {
+  const q = query.trim().toLowerCase()
+  if (!q || hit.venue !== 'crypto') return false
+  const label = hit.label.toLowerCase()
+  const symbol = hit.symbol.toLowerCase()
+  return label === q || symbol === q || symbol === `${q}usdt` || symbol === `${q}usdc`
 }
