@@ -1,10 +1,8 @@
 import { formatPct, formatPrice, formatUsd, pnlClass } from '../lib/format'
 import { marketValue, openPnl } from '../lib/account'
-import type { Candle, Instrument, Interval, Position, Quote } from '../types'
+import type { Candle, Instrument, Position, Quote } from '../types'
 import type { Viewer } from '../lib/api'
 import { ChartPane } from './ChartPane'
-
-const INTERVALS: Interval[] = ['1m', '5m', '15m', '1h', '1d']
 
 export function Discover({
   positions,
@@ -13,8 +11,6 @@ export function Discover({
   desks,
   selected,
   onSelect,
-  interval,
-  onInterval,
   candles,
   chartError,
 }: {
@@ -24,8 +20,6 @@ export function Discover({
   desks: string[]
   selected: Position | null
   onSelect: (position: Position) => void
-  interval: Interval
-  onInterval: (interval: Interval) => void
   candles: Candle[]
   chartError: string | null
 }) {
@@ -57,11 +51,11 @@ export function Discover({
                 >
                   <span>
                     <strong>
-                      {position.label}
+                      @{position.person.screenName}
                       {mine ? <i className="yours">Yours</i> : null}
                     </strong>
                     <em>
-                      @{position.person.screenName} · {position.name}
+                      {position.label} · {position.name}
                     </em>
                   </span>
                   <span className="name-px">
@@ -80,38 +74,51 @@ export function Discover({
         ) : null}
       </aside>
       <section className="stage">
-        {instrument ? (
+        {selected ? (
           <>
             <header className="quote-head">
               <div>
-                <p className="label-name">{instrument.name}</p>
                 <h2>
-                  {instrument.label}
-                  {instrument.venue === 'crypto' || instrument.venue === 'perpetual' ? <span className="all-day">Trades all day</span> : null}
+                  <a href={`https://xitter.space/${encodeURIComponent(selected.person.screenName)}`}>@{selected.person.screenName}</a>
                 </h2>
-                {instrument.venue === 'launch' && quote?.creator ? (
+                <p className="label-name">
+                  {selected.label} · {selected.name}
+                  {selected.venue === 'crypto' || selected.venue === 'perpetual' ? <span className="all-day">Trades all day</span> : null}
+                </p>
+                {selected.venue === 'launch' && quote?.creator && quote.creator.toLowerCase() !== selected.person.screenName.toLowerCase() ? (
                   <a className="creator" href={`https://xitter.space/${encodeURIComponent(quote.creator)}`}>
                     @{quote.creator}
                   </a>
                 ) : null}
               </div>
               <div className="last">
-                <strong>{quote ? formatPrice(quote.price, instrument.venue) : '—'}</strong>
+                <strong>{quote ? formatPrice(quote.price, selected.venue) : '—'}</strong>
                 {quote ? (
                   <em className={pnlClass(quote.change)}>
-                    {formatPrice(Math.abs(quote.change), instrument.venue)} {formatPct(quote.changePct)}
+                    {formatPrice(Math.abs(quote.change), selected.venue)} {formatPct(quote.changePct)}
                   </em>
                 ) : (
                   <em>Waiting for a price</em>
                 )}
               </div>
             </header>
-            <div className="intervals">
-              {INTERVALS.map((item) => (
-                <button key={item} type="button" aria-pressed={item === interval} onClick={() => onInterval(item)}>
-                  {item}
-                </button>
-              ))}
+            <div className="position-card">
+              <p>
+                <span>Username</span>
+                <strong>@{selected.person.screenName}</strong>
+              </p>
+              <p>
+                <span>Size</span>
+                <strong>{formatUsd(marketValue(selected, quote?.price))}</strong>
+              </p>
+              <p>
+                <span>Avg</span>
+                <strong>{formatPrice(selected.avgPrice, selected.venue)}</strong>
+              </p>
+              <p>
+                <span>P&L</span>
+                <strong className={pnlClass(openPnl(selected, quote?.price))}>{formatUsd(openPnl(selected, quote?.price), true)}</strong>
+              </p>
             </div>
             <div className="chart-wrap">
               <ChartPane candles={candles} quote={quote} />
@@ -123,28 +130,6 @@ export function Discover({
           <p className="hint pad">Pick a position to open its chart.</p>
         )}
       </section>
-      <aside className="ticket">
-        {selected ? (
-          <>
-            <p className="ticket-kicker">Position</p>
-            <h2>@{selected.person.screenName}</h2>
-            <p className="ticket-line">
-              <span>Size</span>
-              <span>{formatUsd(marketValue(selected, quote?.price))}</span>
-            </p>
-            <p className="ticket-line">
-              <span>Average</span>
-              <span>{formatPrice(selected.avgPrice, selected.venue)}</span>
-            </p>
-            <p className="ticket-line">
-              <span>Open P&L</span>
-              <span className={pnlClass(openPnl(selected, quote?.price))}>{formatUsd(openPnl(selected, quote?.price), true)}</span>
-            </p>
-          </>
-        ) : (
-          <p className="hint">Positions filed by {deskList(desks)} land on the person who paid.</p>
-        )}
-      </aside>
     </div>
   )
 }

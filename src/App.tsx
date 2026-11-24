@@ -7,7 +7,7 @@ import { Discover } from './components/Discover'
 import { SessionRibbon } from './components/SessionRibbon'
 import { LaunchForm } from './components/LaunchForm'
 import { Portfolio } from './components/Portfolio'
-import type { Candle, Interval, Position, Quote } from './types'
+import type { Candle, Position, Quote } from './types'
 
 function liveSession(quotes: Record<string, Quote>, selected: Position | null, now: Date): EquitySession {
   const selectedQuote = selected ? quotes[`${selected.venue}:${selected.symbol}`] : undefined
@@ -30,7 +30,6 @@ export default function App() {
   const [viewer, setViewer] = useState<Viewer | null>(null)
   const [book, setBook] = useState<Book>({ positions: [], fills: [], desks: [], durable: true, nqfxCents: 0 })
   const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [interval, setInterval] = useState<Interval>('1m')
   const [quotes, setQuotes] = useState<Record<string, Quote>>({})
   const [candles, setCandles] = useState<Candle[]>([])
   const [chartError, setChartError] = useState<string | null>(null)
@@ -127,7 +126,7 @@ export default function App() {
     let stop = false
     const id = `${selected.venue}:${selected.symbol}`
     const load = () => {
-      void fetchCandles(id, interval)
+      void fetchCandles(id, '1m')
         .then((rows) => {
           if (stop) return
           setCandles(rows)
@@ -138,12 +137,12 @@ export default function App() {
         })
     }
     load()
-    const timer = window.setInterval(load, interval === '1m' ? 8000 : 20_000)
+    const timer = window.setInterval(load, 8000)
     return () => {
       stop = true
       window.clearInterval(timer)
     }
-  }, [selected?.id, selected?.symbol, selected?.venue, interval])
+  }, [selected?.id, selected?.symbol, selected?.venue])
 
   const session = useMemo(() => liveSession(quotes, selected, now), [quotes, selected, now])
   const ribbon = shownSession(selected?.venue, session)
@@ -222,8 +221,6 @@ export default function App() {
           desks={book.desks}
           selected={selected}
           onSelect={(position: Position) => setSelectedId(position.id)}
-          interval={interval}
-          onInterval={setInterval}
           candles={candles}
           chartError={chartError}
         />
