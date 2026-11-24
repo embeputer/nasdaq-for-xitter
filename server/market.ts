@@ -1,4 +1,4 @@
-export type Venue = 'stock' | 'crypto' | 'perpetual'
+export type Venue = 'stock' | 'crypto' | 'perpetual' | 'launch'
 export type Interval = '1m' | '5m' | '15m' | '1h' | '1d'
 
 export type Quote = {
@@ -82,7 +82,12 @@ export function parseId(id: string): { venue: Venue; symbol: string } | null {
   const venue = id.slice(0, split)
   const symbol = id.slice(split + 1).trim()
   if (!symbol || symbol.length > 68) return null
-  if (venue !== 'stock' && venue !== 'crypto' && venue !== 'perpetual') return null
+  if (venue !== 'stock' && venue !== 'crypto' && venue !== 'perpetual' && venue !== 'launch') return null
+  if (venue === 'launch') {
+    const upper = symbol.toUpperCase()
+    if (!/^[A-Z]{2,8}$/.test(upper)) return null
+    return { venue, symbol: upper }
+  }
   if (venue === 'crypto' && isContractAddress(symbol)) {
     const address = contractAddress(symbol)
     return address ? { venue, symbol: address } : null
@@ -973,10 +978,8 @@ export async function searchMarket(venue: Venue, query: string): Promise<Listing
     if (q.length < 1) return []
     return cached(`search:stock:${q.toLowerCase()}`, 30000, () => stockSearch(q))
   }
-  const catalog =
-    venue === 'crypto'
-      ? await spotCatalog()
-      : (await hyperliquidBook()).map((coin) => listing('perpetual', coin.name, coin.name, `${coin.name}-PERP`))
+  if (venue !== 'crypto') return []
+  const catalog = await spotCatalog()
   const needle = q.toLowerCase().replace(/-perp$/, '')
   return catalog
     .filter((item) => {

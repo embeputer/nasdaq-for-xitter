@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import { samePerson, type Position } from './book.ts'
+import { coverClose, deskKey } from './padding.ts'
 import type { PaymentRow } from './store.ts'
 
 export type PayTransfer = {
@@ -16,6 +17,8 @@ export type PayPlan = {
   price: number
   cents: number
   transfers: PayTransfer[]
+  reserves: { desk: string; cents: number }[]
+  credit: { desk: string; cents: number }[]
 }
 
 export type CloseError = { ok: false; status: number; error: string; message: string }
@@ -52,13 +55,15 @@ export function planPayout(input: {
   position: Position
   price: number
   payments: PaymentRow[]
+  padding: Record<string, number>
+  balances: Record<string, number> | null
   desks: { screenName: string; canSend: boolean; maxCents: number }[]
 }): { ok: true; plan: PayPlan } | CloseError {
   const cents = payoutCents(input.position.qty, input.price)
   if (cents === null) {
     return { ok: false, status: 400, error: 'too_small', message: "This position is worth less than 1¢, so it can't be paid out." }
   }
-  const weights = new Map<string, number>()
+  const paid: PaymentRow[] = []
   const labels = new Map<string, string>()
   const detail = `${input.position.venue}:${input.position.symbol}`
   for (const row of input.payments) {
@@ -67,10 +72,10 @@ export function planPayout(input: {
     if (!Number.isSafeInteger(row.amountCents) || row.amountCents < 1) continue
     const key = deskKey(row.desk)
     if (!key) continue
-    weights.set(key, (weights.get(key) ?? 0) + row.amountCents)
+    paid.push(row)
     if (!labels.has(key)) labels.set(key, row.desk.trim().replace(/^@/, ''))
   }
-  if (weights.size === 0) {
+  if (paid.length === 0) {
     return {
       ok: false,
       status: 409,
@@ -78,13 +83,33 @@ export function planPayout(input: {
       message: "No Equicoins were paid in for this position, so it can't be closed for cash.",
     }
   }
-  const shares = allocate(cents, weights)
-  if (!shares) {
-    return { ok: false, status: 409, error: 'too_large', message: "This position is too large to pay out in one close. The position is still open." }
+  const covered = coverClose({
+    cents,
+    payments: paid.map((row) => ({ desk: row.desk, amountCents: row.amountCents, updatedAt: row.updatedAt, id: row.id })),
+    padding: input.padding,
+    balances: input.balances,
+    sendable: new Set(input.desks.filter((desk) => desk.canSend).map((desk) => deskKey(desk.screenName))),
+  })
+  if (covered === 'no_account') {
+    const label = input.desks.find((desk) => !desk.canSend)?.screenName || paid[0]?.desk || 'nasdaq'
+    return {
+      ok: false,
+      status: 502,
+      error: 'no_account',
+      message: `@${label.replace(/^@/, '')} can't send Equicoins right now. The position is still open.`,
+    }
+  }
+  if (covered === 'short') {
+    return {
+      ok: false,
+      status: 409,
+      error: 'short_fund',
+      message: "The padding fund can't cover this close. The position is still open.",
+    }
   }
   const note = closeNote(input.position.label)
   const transfers: PayTransfer[] = []
-  for (const share of shares) {
+  for (const share of covered.shares) {
     const desk = input.desks.find((item) => deskKey(item.screenName) === share.desk)
     const label = desk?.screenName || labels.get(share.desk) || share.desk
     if (!desk?.canSend) {
@@ -121,7 +146,7 @@ export function planPayout(input: {
       })
     })
   }
-  return { ok: true, plan: { qty: input.position.qty, price: input.price, cents, transfers } }
+  return { ok: true, plan: { qty: input.position.qty, price: input.price, cents, transfers, reserves: covered.reserves, credit: covered.credit } }
 }
 
 export function readPayout(raw: string | null): PayPlan | 'bad' | null {
@@ -152,30 +177,24 @@ export function readPayout(raw: string | null): PayPlan | 'bad' | null {
     transfers.push({ desk: row.desk, cents: row.cents, note: row.note, key: row.key })
   }
   if (sum !== cents) return 'bad'
-  return { qty, price, cents, transfers }
+  const reserves = readAdjust(record.reserves)
+  const credit = readAdjust(record.credit)
+  if (!reserves || !credit) return 'bad'
+  return { qty, price, cents, transfers, reserves, credit }
 }
 
-function allocate(total: number, weights: Map<string, number>): { desk: string; cents: number }[] | null {
-  const entries = [...weights.entries()].filter(([, weight]) => weight > 0)
-  const sum = entries.reduce((totalWeight, [, weight]) => totalWeight + weight, 0)
-  if (!entries.length || !Number.isSafeInteger(sum) || sum < 1) return null
-  const parts = entries.map(([desk, weight]) => {
-    const product = total * weight
-    if (!Number.isSafeInteger(product)) return null
-    return { desk, cents: Math.floor(product / sum), remainder: product % sum }
-  })
-  if (parts.some((part) => part === null)) return null
-  const shares = parts as { desk: string; cents: number; remainder: number }[]
-  let left = total - shares.reduce((taken, part) => taken + part.cents, 0)
-  if (!Number.isSafeInteger(left) || left < 0) return null
-  shares.sort((a, b) => b.remainder - a.remainder || a.desk.localeCompare(b.desk))
-  for (const part of shares) {
-    if (left <= 0) break
-    part.cents += 1
-    left -= 1
+function readAdjust(value: unknown): { desk: string; cents: number }[] | null {
+  if (value == null) return []
+  if (!Array.isArray(value)) return null
+  const out: { desk: string; cents: number }[] = []
+  for (const item of value) {
+    if (!item || typeof item !== 'object') return null
+    const row = item as Record<string, unknown>
+    if (typeof row.desk !== 'string' || !deskKey(row.desk)) return null
+    if (typeof row.cents !== 'number' || !Number.isSafeInteger(row.cents) || row.cents < 1) return null
+    out.push({ desk: deskKey(row.desk), cents: row.cents })
   }
-  if (left !== 0) return null
-  return shares.filter((part) => part.cents > 0).map(({ desk, cents }) => ({ desk, cents }))
+  return out
 }
 
 function chunk(total: number, max: number): number[] | null {
@@ -190,6 +209,4 @@ function chunk(total: number, max: number): number[] | null {
   return parts
 }
 
-function deskKey(name: string): string {
-  return name.trim().replace(/^@/, '').toLowerCase()
-}
+

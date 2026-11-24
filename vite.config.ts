@@ -22,14 +22,17 @@ function marketApi(): Plugin {
     name: 'larp-api',
     configureServer(server) {
       attach(server.middlewares)
+      if (process.env.VITEST) return
       const flag = globalThis as { larpWatch?: boolean }
       if (flag.larpWatch) return
       flag.larpWatch = true
       const tick = () => {
         void runIngest()
           .then((summary) => {
-            if (summary.filled || summary.refunded || summary.pending) {
-              console.log(`ingest filled=${summary.filled} refunded=${summary.refunded} pending=${summary.pending}`)
+            if (summary.filled || summary.refunded || summary.pending || summary.vaulted) {
+              console.log(
+                `ingest filled=${summary.filled} refunded=${summary.refunded} pending=${summary.pending} vaulted=${summary.vaulted}`,
+              )
             }
           })
           .catch((error: unknown) => {

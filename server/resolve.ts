@@ -1,7 +1,16 @@
 import { contractAddress, isContractAddress, searchMarket, type Listing, type Venue } from './market.ts'
 
 export const REFUND_NOTE =
-  'Sorry, i couldn\'t find that! Make sure you specify an available stock, crypto, or perpetual market. If donating, enter "donate" in the note.'
+  'Sorry, i couldn\'t find that! Make sure you specify an available stock or crypto market. If donating, enter "donate" in the note.'
+
+const PREVIOUS_REFUND_NOTES = [
+  'Sorry, i couldn\'t find that! Make sure you specify an available stock, crypto, or perpetual market. If donating, enter "donate" in the note.',
+]
+
+export function isRefundNote(note: string): boolean {
+  const text = note.trim()
+  return text === REFUND_NOTE || PREVIOUS_REFUND_NOTES.includes(text)
+}
 
 const DONATION = new Set([
   'donate',
@@ -46,6 +55,7 @@ const SKIP = new Set([
   'perp',
   'perps',
   'perpetual',
+  'perpetuals',
   'usd',
   'usdt',
   'usdc',
@@ -68,45 +78,82 @@ export type NoteQuery = { venue: Venue | null; query: string }
 
 type Search = (venue: Venue, query: string) => Promise<Listing[]>
 
-export function isDonationNote(note: string): boolean {
+function noteWords(note: string): string[] {
   const text = note.trim()
-  if (!text || text === REFUND_NOTE) return false
+  if (!text || isRefundNote(text)) return []
   const tokens = (text.match(/[A-Za-z][A-Za-z0-9._-]{0,23}/g) ?? []).map((token) => token.toLowerCase())
-  const words = tokens.filter((token) => token.length >= 2 && !SKIP.has(token) && !COURTESY.has(token))
+  return tokens.filter((token) => token.length >= 2 && !SKIP.has(token) && !COURTESY.has(token))
+}
+
+export function isDonationNote(note: string): boolean {
+  const words = noteWords(note)
   return words.length > 0 && words.every((word) => DONATION.has(word))
 }
 
+/** A note whose only remaining word is "vault" stores the Equicoins as an NQFX balance. */
+export function isVaultNote(note: string): boolean {
+  const words = noteWords(note)
+  return words.length > 0 && words.every((word) => word === 'vault')
+}
+
+/** Drop a perpetual order. A ticker that is not tied to that order still counts. */
+function withoutPerps(text: string): string {
+  return text
+    .replace(/\b(?:perps?|perpetuals?)\s*[:=]\s*[A-Za-z0-9._-]{1,24}/gi, ' ')
+    .replace(/\b[A-Za-z][\w.]{0,23}-PERP\b/gi, ' ')
+    .replace(/\b(?:perps?|perpetuals?)\s+[A-Za-z][\w.]{0,23}\b/gi, ' ')
+}
+
+function launchQueries(text: string): NoteQuery[] {
+  const out: NoteQuery[] = []
+  for (const match of text.matchAll(/\bxit(?:\s*[:=]\s*|\s+)([A-Za-z]{2,8})\b/gi)) {
+    out.push({ venue: 'launch', query: match[1].toUpperCase() })
+  }
+  for (const match of text.matchAll(/\bxit([A-Za-z]{2,8})\b/gi)) {
+    out.push({ venue: 'launch', query: match[1].toUpperCase() })
+  }
+  return out
+}
+
+function stripLaunchTokens(text: string): string {
+  return text
+    .replace(/\bxit(?:\s*[:=]\s*|\s+)[A-Za-z]{2,8}\b/gi, ' ')
+    .replace(/\bxit[A-Za-z]{2,8}\b/gi, ' ')
+}
+
 export function queriesFromNote(note: string): NoteQuery[] {
-  const text = note.trim()
-  if (!text || text === REFUND_NOTE) return []
-  const address = contractAddress(text)
-  if (address && text.toLowerCase() === address.toLowerCase()) return [{ venue: 'crypto', query: address }]
-  if (!/\s/.test(text)) {
-    const perp = text.match(/^([A-Za-z][\w.]{0,23})-PERP$/i)
-    if (perp) return [{ venue: 'perpetual', query: perp[1] }]
-    if (/^[A-Za-z][\w.]{0,23}$/.test(text)) return [{ venue: null, query: text }]
+  const raw = note.trim()
+  if (!raw || isRefundNote(raw)) return []
+  const text = withoutPerps(raw)
+  const launches = launchQueries(text)
+  const rest = stripLaunchTokens(text)
+  if (!rest.trim()) return dedupeQueries(launches)
+  const address = contractAddress(rest)
+  if (address && rest.toLowerCase() === address.toLowerCase()) return dedupeQueries([{ venue: 'crypto', query: address }, ...launches])
+  if (!/\s/.test(rest)) {
+    if (/^[A-Za-z][\w.]{0,23}$/.test(rest)) return dedupeQueries([...launches, { venue: null, query: rest }])
   }
   const out: NoteQuery[] = []
-  for (const match of text.matchAll(/\b(stock|crypto|perp|perpetual)\s*[:=]\s*([A-Za-z0-9._-]{1,24})/gi)) {
+  for (const match of rest.matchAll(/\b(stock|crypto)\s*[:=]\s*([A-Za-z0-9._-]{1,24})/gi)) {
     const kind = match[1].toLowerCase()
-    const venue: Venue = kind === 'stock' ? 'stock' : kind === 'crypto' ? 'crypto' : 'perpetual'
-    out.push({ venue, query: match[2] })
+    out.push({ venue: kind === 'stock' ? 'stock' : 'crypto', query: match[2] })
   }
-  for (const match of text.matchAll(/\$([A-Za-z][A-Za-z0-9._-]{0,14})/g)) {
+  for (const match of rest.matchAll(/\$([A-Za-z][A-Za-z0-9._-]{0,14})/g)) {
     out.push({ venue: 'stock', query: match[1] })
   }
-  for (const match of text.matchAll(/\b([A-Za-z][\w.]{0,16})-PERP\b/gi)) {
-    out.push({ venue: 'perpetual', query: match[1] })
-  }
   if (!out.length) {
-    for (const token of text.match(/[A-Za-z][A-Za-z0-9._-]{0,23}/g) ?? []) {
-      if (SKIP.has(token.toLowerCase()) || token.length < 2) continue
+    for (const token of rest.match(/[A-Za-z][A-Za-z0-9._-]{0,23}/g) ?? []) {
+      if (SKIP.has(token.toLowerCase()) || token.length < 2 || /-perp$/i.test(token)) continue
       out.push({ venue: null, query: token })
     }
   }
   if (address) out.unshift({ venue: 'crypto', query: address })
+  return dedupeQueries([...launches, ...out])
+}
+
+function dedupeQueries(items: NoteQuery[]): NoteQuery[] {
   const seen = new Set<string>()
-  return out
+  return items
     .filter((item) => {
       const key = `${item.venue ?? ''}:${item.query.toLowerCase()}`
       if (seen.has(key)) return false
@@ -145,9 +192,13 @@ export function pickListing(hits: Listing[], query: string, venue: Venue | null)
   return null
 }
 
-export async function resolveNote(note: string, search: Search = searchMarket): Promise<Listing | null> {
+export async function resolveNote(
+  note: string,
+  search: Search = searchMarket,
+  findLaunch: (symbol: string) => Promise<Listing | null> = async () => null,
+): Promise<Listing | null> {
   for (const item of queriesFromNote(note)) {
-    const found = await resolveQuery(item, search)
+    const found = item.venue === 'launch' ? await findLaunch(item.query) : await resolveQuery(item, search)
     if (found) return found
   }
   return null
@@ -163,15 +214,10 @@ async function resolveQuery(item: NoteQuery, search: Search): Promise<Listing | 
     const hits = await search('crypto', item.query)
     return pickListing(hits, item.query, 'crypto')
   }
-  const [stocks, cryptos, perps] = await Promise.all([
-    search('stock', item.query),
-    search('crypto', item.query),
-    search('perpetual', item.query),
-  ])
+  const [stocks, cryptos] = await Promise.all([search('stock', item.query), search('crypto', item.query)])
   const stockHit = pickListing(stocks, item.query, 'stock')
   const cryptoHit = pickListing(cryptos, item.query, 'crypto')
-  const perpHit = pickListing(perps, item.query, 'perpetual')
   const name = item.query.trim().toLowerCase()
   if (cryptoHit && cryptoHit.name.toLowerCase() === name && stockHit?.name.toLowerCase() !== name) return cryptoHit
-  return stockHit ?? cryptoHit ?? perpHit
+  return stockHit ?? cryptoHit
 }

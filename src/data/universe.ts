@@ -22,4 +22,5 @@ export const VENUE_LABEL: Record<Venue, string> = {
   stock: 'Stock',
   crypto: 'Crypto',
   perpetual: 'Perpetual',
+  launch: 'UGS',
 }

@@ -12,6 +12,7 @@ export type Book = {
   fills: Fill[]
   desks: string[]
   durable: boolean
+  nqfxCents: number
 }
 
 export async function fetchQuotes(ids: string[]): Promise<Quote[]> {
@@ -62,6 +63,17 @@ export async function openFor(id: string, amount: number, screenName: string): P
   const body = (await res.json()) as { error?: string; screenName?: string }
   if (!res.ok) throw new Error(body.error === 'no_person' ? 'Choose a person from Xitter.' : 'Could not open that position.')
   return body.screenName ?? screenName
+}
+
+export async function launchFor(symbol: string, name: string, liquidity: number, invest: number): Promise<string> {
+  const res = await fetch('/api/launches', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ symbol, name, liquidity, invest }),
+  })
+  const body = (await res.json().catch(() => ({}))) as { message?: string; label?: string }
+  if (!res.ok) throw new Error(body.message || 'Could not launch that stock.')
+  return body.label ?? `xit${symbol.toUpperCase()}`
 }
 
 export async function closeFor(id: string, cash = true): Promise<{ cash: boolean; cents?: number; screenName?: string }> {

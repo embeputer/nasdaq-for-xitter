@@ -1,5 +1,6 @@
 import { fileClose } from './book.ts'
 import type { Desk } from './money.ts'
+import { deskKey } from './padding.ts'
 import { payoutMarker, planPayout, readPayout, type CloseError, type PayPlan } from './payout.ts'
 import type { Store } from './store.ts'
 
@@ -11,6 +12,7 @@ export async function cashOut(input: {
   price: number
   desks: Desk[]
   limit: (desk: Desk) => Promise<number>
+  balance?: (desk: Desk) => Promise<number>
   pay: (desk: Desk, to: string, cents: number, note: string, key: string) => Promise<void>
 }): Promise<CashResult> {
   const position = (await input.ledger.positions()).find((item) => item.id === input.id)
@@ -38,10 +40,25 @@ export async function cashOut(input: {
     plan = marked
   } else {
     const payments = await input.ledger.payments()
+    const padding: Record<string, number> = {}
+    for (const desk of input.desks) padding[deskKey(desk.screenName)] = await input.ledger.paddingCents(desk.screenName)
+    let balances: Record<string, number> | null = null
+    if (input.balance) {
+      balances = {}
+      for (const desk of input.desks) {
+        try {
+          balances[deskKey(desk.screenName)] = await input.balance(desk)
+        } catch (error) {
+          return { ok: false, status: 502, error: 'payout_failed', message: payMessage(desk.screenName, error) }
+        }
+      }
+    }
     const preview = planPayout({
       position,
       price: input.price,
       payments,
+      padding,
+      balances,
       desks: input.desks.map((desk) => ({
         screenName: desk.screenName,
         canSend: Boolean(desk.writeToken),
@@ -66,6 +83,8 @@ export async function cashOut(input: {
       position,
       price: input.price,
       payments,
+      padding,
+      balances,
       desks: input.desks.map((desk) => ({
         screenName: desk.screenName,
         canSend: Boolean(desk.writeToken),
@@ -73,10 +92,31 @@ export async function cashOut(input: {
       })),
     })
     if (!planned.ok) return planned
-    // Freeze the cents and keys before sending. A retry of this close pays the
-    // same plan; Xitter will not send a second time for the same key.
-    await input.ledger.setMeta(markerKey, JSON.stringify(planned.plan))
-    plan = planned.plan
+    // Freeze the cents and keys before sending. The gain is reserved in the
+    // same edit. A retry of this close pays the same plan and does not reserve again.
+    const held = await input.ledger.holdPayout(markerKey, planned.plan)
+    if (held === 'short') {
+      return {
+        ok: false,
+        status: 409,
+        error: 'short_fund',
+        message: "The padding fund can't cover this close. The position is still open.",
+      }
+    }
+    if (held === 'saved') {
+      const stored = readPayout(await input.ledger.meta(markerKey))
+      if (!stored || stored === 'bad') {
+        return {
+          ok: false,
+          status: 409,
+          error: 'bad_marker',
+          message: 'The payout record for this position is unreadable. An admin can close it without cash.',
+        }
+      }
+      plan = stored
+    } else {
+      plan = planned.plan
+    }
   }
   const to = position.person.screenName.trim().replace(/^@/, '')
   for (const transfer of plan.transfers) {
@@ -91,6 +131,7 @@ export async function cashOut(input: {
       return { ok: false, status: 502, error: 'payout_failed', message: payMessage(desk.screenName, error) }
     }
   }
+  if (plan.credit.length > 0) await input.ledger.creditPadding(`pad:${markerKey}`, plan.credit)
   try {
     await input.ledger.updateBook((positions) => {
       const current = positions.find((item) => item.id === position.id)
@@ -123,10 +164,6 @@ export async function cashOut(input: {
 function findDesk(desks: Desk[], name: string): Desk | undefined {
   const key = deskKey(name)
   return desks.find((desk) => deskKey(desk.screenName) === key)
-}
-
-function deskKey(name: string): string {
-  return name.trim().replace(/^@/, '').toLowerCase()
 }
 
 function missingToken(): Error {

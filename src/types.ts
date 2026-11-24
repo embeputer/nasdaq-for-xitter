@@ -1,4 +1,4 @@
-export type Venue = 'stock' | 'crypto' | 'perpetual'
+export type Venue = 'stock' | 'crypto' | 'perpetual' | 'launch'
 
 export type Interval = '1m' | '5m' | '15m' | '1h' | '1d'
 

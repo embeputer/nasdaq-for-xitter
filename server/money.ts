@@ -64,12 +64,29 @@ export function idempotencyKey(paymentId: string): string {
   return `refund-${createHash('sha256').update(paymentId).digest('hex').slice(0, 40)}`
 }
 
-export function parseActivity(body: unknown): { payments: IncomingPayment[]; next: string | null } {
-  if (!body || typeof body !== 'object') return { payments: [], next: null }
-  const record = body as { data?: unknown; next_cursor?: unknown }
+export type LikeDay = { day: string; likes: number; cents: number }
+
+export function parseActivity(body: unknown): { payments: IncomingPayment[]; next: string | null; earnings: LikeDay[] } {
+  if (!body || typeof body !== 'object') return { payments: [], next: null, earnings: [] }
+  const record = body as { data?: unknown; next_cursor?: unknown; earnings?: unknown }
   const rows = Array.isArray(record.data) ? record.data : []
   const next = typeof record.next_cursor === 'string' && record.next_cursor ? record.next_cursor : null
-  return { payments: rows.flatMap(parsePayment), next }
+  return { payments: rows.flatMap(parsePayment), next, earnings: parseEarnings(record.earnings) }
+}
+
+function parseEarnings(value: unknown): LikeDay[] {
+  if (!Array.isArray(value)) return []
+  const out: LikeDay[] = []
+  for (const item of value) {
+    if (!item || typeof item !== 'object') continue
+    const row = item as Record<string, unknown>
+    const day = typeof row.day === 'string' ? row.day : ''
+    const cents = typeof row.cents === 'number' ? row.cents : Number(row.cents)
+    const likes = typeof row.likes === 'number' ? row.likes : Number(row.likes)
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || !Number.isSafeInteger(cents) || cents < 0) continue
+    out.push({ day, likes: Number.isSafeInteger(likes) && likes >= 0 ? likes : 0, cents })
+  }
+  return out
 }
 
 export const ACTIVITY_LIMIT = 10
@@ -99,13 +116,22 @@ export async function sendRefund(token: string, to: string, amountCents: number,
 }
 
 export async function transferLimit(token: string): Promise<number> {
+  const wallet = await readWallet(token)
+  return wallet.maxCents
+}
+
+export async function readWallet(token: string): Promise<{ balanceCents: number; maxCents: number }> {
   if (!token) throw named('MissingWriteToken', 'missing_write_token')
   const res = await xitterFetch(token, new URL('/api/v1/money', XITTER_ORIGIN))
-  if (!res.ok) throw named('PayoutFailed', (await readXitterError(res)) || `limit_${res.status}`)
-  const body = (await res.json()) as { data?: { max_transfer_cents?: unknown } }
+  if (!res.ok) throw named('PayoutFailed', (await readXitterError(res)) || `wallet_${res.status}`)
+  const body = (await res.json()) as { data?: { balance_cents?: unknown; max_transfer_cents?: unknown } }
+  const balance = body.data?.balance_cents
   const max = body.data?.max_transfer_cents
+  if (typeof balance !== 'number' || !Number.isSafeInteger(balance) || balance < 0) {
+    throw named('PayoutFailed', 'Could not read the balance.')
+  }
   if (typeof max !== 'number' || !Number.isSafeInteger(max) || max < 1) throw named('PayoutFailed', 'Could not read the send limit.')
-  return max
+  return { balanceCents: balance, maxCents: max }
 }
 
 export async function sendPayout(token: string, to: string, amountCents: number, note: string, key: string): Promise<void> {

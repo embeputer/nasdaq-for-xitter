@@ -1,10 +1,13 @@
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { fileBuy, fileClose } from './book.ts'
 import { ingest } from './ingest.ts'
 import { ACTIVITY_LIMIT, adminNames, idempotencyKey, parseActivity, type Desk, type IncomingPayment } from './money.ts'
 import { pkcePair } from './oauth.ts'
-import { pickListing, isDonationNote, queriesFromNote, REFUND_NOTE, resolveNote } from './resolve.ts'
-import { memoryStore } from './store.ts'
+import { pickListing, isDonationNote, isRefundNote, isVaultNote, queriesFromNote, REFUND_NOTE, resolveNote } from './resolve.ts'
+import { fileStore, memoryStore } from './store.ts'
 import type { Listing } from './market.ts'
 
 const sender = { id: '9', screenName: 'ada', name: 'Ada', avatarUrl: null }
@@ -24,9 +27,14 @@ describe('admins', () => {
 describe('refund note', () => {
   it('uses the desk wording and fits the Equicoin note limit', () => {
     expect(REFUND_NOTE).toBe(
-      'Sorry, i couldn\'t find that! Make sure you specify an available stock, crypto, or perpetual market. If donating, enter "donate" in the note.',
+      'Sorry, i couldn\'t find that! Make sure you specify an available stock or crypto market. If donating, enter "donate" in the note.',
     )
     expect(REFUND_NOTE.length).toBeLessThanOrEqual(140)
+    expect(
+      isRefundNote(
+        'Sorry, i couldn\'t find that! Make sure you specify an available stock, crypto, or perpetual market. If donating, enter "donate" in the note.',
+      ),
+    ).toBe(true)
     expect(queriesFromNote(REFUND_NOTE)).toEqual([])
     const gifts = ['donate', 'donation', 'TIP', 'for the fund', 'a gift', 'thanks for the charity', 'contribution']
     expect(gifts.filter((note) => !isDonationNote(note))).toEqual([])
@@ -34,15 +42,36 @@ describe('refund note', () => {
     expect(isDonationNote('tip NVDA')).toBe(false)
     expect(isDonationNote('APPL')).toBe(false)
     expect(isDonationNote(REFUND_NOTE)).toBe(false)
+    expect(isVaultNote('vault')).toBe(true)
+    expect(isVaultNote('VAULT')).toBe(true)
+    expect(isVaultNote('please vault')).toBe(true)
+    expect(isVaultNote('enter vault')).toBe(false)
+    expect(isVaultNote('vault NVDA')).toBe(false)
+    expect(isVaultNote('NVDA')).toBe(false)
     expect(idempotencyKey('123456789')).toBe('refund-123456789')
   })
 })
 
 describe('ticker notes', () => {
-  it('reads a ticker, a perp, and a cashtag', () => {
+  it('reads a ticker and a cashtag', () => {
     expect(queriesFromNote('NVDA')).toEqual([{ venue: null, query: 'NVDA' }])
     expect(queriesFromNote('please buy $ORCL')).toEqual([{ venue: 'stock', query: 'ORCL' }])
-    expect(queriesFromNote('perp:kPEPE')).toEqual([{ venue: 'perpetual', query: 'kPEPE' }])
+    expect(queriesFromNote('perp:kPEPE')).toEqual([])
+    expect(queriesFromNote('BTC-PERP')).toEqual([])
+    expect(queriesFromNote('perpetual BTC')).toEqual([])
+    expect(queriesFromNote('buy BTC-PERP')).toEqual([])
+    expect(queriesFromNote('NVDA perp')).toEqual([{ venue: null, query: 'NVDA' }])
+    expect(queriesFromNote('$ORCL perp')).toEqual([{ venue: 'stock', query: 'ORCL' }])
+    expect(queriesFromNote('xitYAMS')).toEqual([{ venue: 'launch', query: 'YAMS' }])
+    expect(queriesFromNote('xityams')).toEqual([{ venue: 'launch', query: 'YAMS' }])
+    expect(queriesFromNote('XITYAMS')).toEqual([{ venue: 'launch', query: 'YAMS' }])
+    expect(queriesFromNote('xit:yams')).toEqual([{ venue: 'launch', query: 'YAMS' }])
+    expect(queriesFromNote('please buy xit YAMS')).toEqual([{ venue: 'launch', query: 'YAMS' }])
+    expect(queriesFromNote('YAMS')).toEqual([{ venue: null, query: 'YAMS' }])
+    expect(queriesFromNote('xom')).toEqual([{ venue: null, query: 'xom' }])
+    expect(queriesFromNote('xrp')).toEqual([{ venue: null, query: 'xrp' }])
+    expect(queriesFromNote('xyams')).toEqual([{ venue: null, query: 'xyams' }])
+    expect(queriesFromNote('xYAMS')).toEqual([{ venue: null, query: 'xYAMS' }])
   })
 
   it('prefers the stock, then the spot coin', async () => {
@@ -55,7 +84,7 @@ describe('ticker notes', () => {
       listings.filter((item) => item.venue === venue && `${item.symbol} ${item.name} ${item.label}`.toLowerCase().includes(query.toLowerCase()))
     expect((await resolveNote('oracle', search))?.id).toBe('stock:ORCL')
     expect((await resolveNote('BTC', search))?.id).toBe('crypto:BTCUSDT')
-    expect((await resolveNote('BTC-PERP', search))?.id).toBe('perpetual:BTC')
+    expect(await resolveNote('BTC-PERP', search)).toBeNull()
     expect(await resolveNote('nope', search)).toBeNull()
   })
 
@@ -214,17 +243,222 @@ describe('ingest', () => {
     expect((await ledger.payment('2'))?.status).toBe('donated')
     expect(await ledger.positions()).toHaveLength(0)
   })
+
+  it('stores a vault note as that person\'s NQFX balance', async () => {
+    const ledger = memoryStore()
+    let refunds = 0
+    let lookups = 0
+    const run = (rows: IncomingPayment[], screenName = 'nasdaq') =>
+      ingest({
+        store: ledger,
+        desks: [{ screenName, readToken: 'read', writeToken: '' }],
+        now: 10,
+        activity: async () => ({ payments: rows, next: null }),
+        resolve: async () => {
+          lookups += 1
+          return { id: 'stock:NVDA', venue: 'stock', symbol: 'NVDA', label: 'NVDA', name: 'NVIDIA' }
+        },
+        quote: async () => 25,
+        refund: async () => {
+          refunds += 1
+        },
+      })
+    await run([payment('1', 'OLD')])
+    const result = await run([payment('1', 'OLD'), payment('2', 'vault', 2500), payment('3', 'please vault', 100)])
+    expect(result.vaulted).toBe(2)
+    expect(result.refunded).toBe(0)
+    expect(refunds).toBe(0)
+    expect(lookups).toBe(0)
+    expect(await ledger.vaultCents('ada')).toBe(2600)
+    expect(await ledger.vaultCents('Ada')).toBe(2600)
+    expect((await ledger.payment('2'))?.status).toBe('vaulted')
+    await run([payment('1', 'OLD'), payment('2', 'vault', 2500)])
+    expect(await ledger.vaultCents('ada')).toBe(2600)
+    expect(await ledger.positions()).toHaveLength(0)
+
+    await run([payment('9', 'OLD')], 'nyse')
+    await run([payment('9', 'OLD'), payment('4', 'VAULT', 50)], 'nyse')
+    expect(await ledger.vaultCents('ada')).toBe(2650)
+
+    const bought = await run([payment('5', 'vault NVDA', 400)])
+    expect(bought.filled).toBe(1)
+    expect(await ledger.vaultCents('ada')).toBe(2650)
+  })
+
+  it('reloads an NQFX balance from the ledger file', async () => {
+    const path = join(mkdtempSync(join(tmpdir(), 'larp-vault-')), 'ledger.json')
+    const run = (store: ReturnType<typeof fileStore>, rows: IncomingPayment[]) =>
+      ingest({
+        store,
+        desks: [desk],
+        now: 10,
+        activity: async () => ({ payments: rows, next: null }),
+        resolve: async () => null,
+        quote: async () => null,
+        refund: async () => undefined,
+      })
+    const ledger = fileStore(path)
+    await run(ledger, [payment('1', 'OLD')])
+    await run(ledger, [payment('1', 'OLD'), payment('2', 'vault', 1500)])
+    expect(await fileStore(path).vaultCents('ada')).toBe(1500)
+  })
+
+  it('launches a user stock from NQFX and files a later xit note', async () => {
+    const ledger = memoryStore()
+    const bob = { id: '8', screenName: 'bob', name: 'Bob', avatarUrl: null }
+    const run = (rows: IncomingPayment[], search: () => Promise<never[] | Listing[]> = async () => {
+      throw new Error('stock search is not used for xit notes')
+    }) =>
+      ingest({
+        store: ledger,
+        desks: [desk],
+        now: 10,
+        activity: async () => ({ payments: rows, next: null }),
+        resolve: (note) => resolveNote(note, search, (symbol) => ledger.launchListing(symbol)),
+        quote: async () => 25,
+        refund: async () => undefined,
+      })
+    await run([payment('1', 'OLD')])
+    await run([payment('1', 'OLD'), payment('2', 'vault', 5000)])
+    const opened = await ledger.openLaunch({
+      person: sender,
+      symbol: 'xitYAMS',
+      name: '  Yams  ',
+      liquidityCents: 1000,
+      investCents: 1000,
+      now: 10,
+    })
+    expect(opened.ok).toBe(true)
+    if (!opened.ok) return
+    expect(opened.launch.label).toBe('xitYAMS')
+    expect(opened.launch.name).toBe('Yams')
+    expect(opened.launch.cashCents).toBe(2000)
+    expect(opened.launch.supply).toBe(10)
+    expect(opened.launch.price).toBe(1)
+    expect(await ledger.vaultCents('ada')).toBe(3000)
+    expect((await ledger.positions())[0]?.qty).toBe(10)
+    expect((await ledger.payments()).find((row) => row.id === 'ugs-YAMS-nasdaq')?.amountCents).toBe(1000)
+    const poor = await ledger.openLaunch({
+      person: sender,
+      symbol: 'NOPE',
+      name: 'Nope',
+      liquidityCents: 10_000,
+      investCents: 0,
+      now: 11,
+    })
+    expect(poor.ok).toBe(false)
+    const taken = await ledger.openLaunch({
+      person: sender,
+      symbol: 'YAMS',
+      name: 'Other',
+      liquidityCents: 100,
+      investCents: 0,
+      now: 12,
+    })
+    expect(taken.ok).toBe(false)
+    expect(await ledger.vaultCents('ada')).toBe(3000)
+
+    const bought = await run([payment('1', 'OLD'), payment('2', 'vault', 5000), { ...payment('3', 'xitYAMS', 1000), sender: bob }])
+    expect(bought.filled).toBe(1)
+    expect(bought.refunded).toBe(0)
+    const quote = await ledger.launchQuote('YAMS')
+    expect(quote?.price).toBeCloseTo(20 / 19)
+    const bobPosition = (await ledger.positions()).find((position) => position.person.screenName === 'bob')
+    expect(bobPosition?.qty).toBeCloseTo(9)
+    expect(bobPosition?.label).toBe('xitYAMS')
+
+    const missed = await run(
+      [
+        payment('1', 'OLD'),
+        payment('2', 'vault', 5000),
+        { ...payment('3', 'xitYAMS', 1000), sender: bob },
+        payment('4', 'xitNOPE', 500),
+        payment('5', 'YAMS', 500),
+      ],
+      async () => [],
+    )
+    expect(missed.refunded).toBe(2)
+    expect(missed.filled).toBe(0)
+    expect((await ledger.launchQuote('YAMS'))?.price).toBeCloseTo(20 / 19)
+    const ada = (await ledger.positions()).find((position) => position.person.screenName === 'ada')
+    expect(ada?.qty).toBe(10)
+    if (!ada || !quote) return
+    const cents = Math.round(ada.qty * quote.price * 100)
+    await ledger.settleLaunch(ada, cents)
+    await ledger.settleLaunch(ada, cents)
+    const left = await ledger.launchQuote('YAMS')
+    expect(left?.price).toBeCloseTo(20 / 19, 5)
+  })
+
+  it('locks liquidity without opening a position', async () => {
+    const ledger = memoryStore()
+    await ledger.creditVault(
+      {
+        id: 'v1',
+        status: 'processing',
+        amountCents: 5000,
+        note: 'vault',
+        desk: 'nasdaq',
+        senderId: sender.id,
+        senderName: sender.name,
+        senderScreen: sender.screenName,
+        avatarUrl: null,
+        detail: '',
+        updatedAt: 1,
+      },
+      sender,
+    )
+    const opened = await ledger.openLaunch({
+      person: sender,
+      symbol: 'YAMS',
+      name: 'Yams',
+      liquidityCents: 2500,
+      investCents: 0,
+      now: 2,
+    })
+    expect(opened.ok).toBe(true)
+    expect(await ledger.vaultCents('ada')).toBe(2500)
+    expect(await ledger.positions()).toHaveLength(0)
+    expect((await ledger.payments()).some((row) => row.id.startsWith('ugs-'))).toBe(false)
+    expect((await ledger.launchQuote('YAMS'))?.price).toBe(1)
+  })
+
+  it('refunds a perpetual note instead of opening one', async () => {
+    const ledger = memoryStore()
+    let refunds = 0
+    const run = (rows: IncomingPayment[]) =>
+      ingest({
+        store: ledger,
+        desks: [desk],
+        now: 10,
+        activity: async () => ({ payments: rows, next: null }),
+        resolve: (note) => resolveNote(note, async () => {
+          throw new Error('perp notes are not searched')
+        }),
+        quote: async () => 25,
+        refund: async () => {
+          refunds += 1
+        },
+      })
+    await run([payment('1', 'OLD')])
+    const result = await run([payment('1', 'OLD'), payment('2', 'BTC-PERP'), payment('3', 'perp:kPEPE')])
+    expect(result.refunded).toBe(2)
+    expect(result.filled).toBe(0)
+    expect(refunds).toBe(2)
+    expect(await ledger.positions()).toHaveLength(0)
+  })
 })
 
 describe('activity', () => {
-  it('ignores earnings and keeps received notes', () => {
+  it('keeps received notes and like-day earnings', () => {
     const parsed = parseActivity({
-      earnings: [{ amount_cents: 1 }],
+      earnings: [{ day: '2026-11-24', likes: 2, cents: 100 }, { amount_cents: 1 }, { day: 'nope', likes: 1, cents: 5 }],
       data: [{ id: '7', amount_cents: 100, note: 'AAPL', direction: 'received', reversed: false, sender: { id: '2', screen_name: 'ada', name: 'Ada' } }],
       next_cursor: null,
     })
     expect(parsed.payments).toHaveLength(1)
     expect(parsed.payments[0]?.sender.screenName).toBe('ada')
+    expect(parsed.earnings).toEqual([{ day: '2026-11-24', likes: 2, cents: 100 }])
   })
 })
 

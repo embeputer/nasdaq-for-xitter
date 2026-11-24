@@ -26,7 +26,7 @@ function viewFromLocation(): 'discover' | 'portfolio' {
 export default function App() {
   const [view, setView] = useState<'discover' | 'portfolio'>(viewFromLocation)
   const [viewer, setViewer] = useState<Viewer | null>(null)
-  const [book, setBook] = useState<Book>({ positions: [], fills: [], desks: [], durable: true })
+  const [book, setBook] = useState<Book>({ positions: [], fills: [], desks: [], durable: true, nqfxCents: 0 })
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [interval, setInterval] = useState<Interval>('1m')
   const [quotes, setQuotes] = useState<Record<string, Quote>>({})
@@ -214,6 +214,7 @@ export default function App() {
           fills={viewer?.admin ? book.fills : book.fills.filter((fill) => fill.person.screenName.toLowerCase() === viewer?.screenName.toLowerCase())}
           quotes={quotes}
           desks={book.desks}
+          nqfxCents={book.nqfxCents}
           onClose={async (position, cash) => {
             try {
               const result = await closeFor(position.id, cash)

@@ -6,7 +6,6 @@ import type { Instrument, Quote, Venue } from '../types'
 const CLASSES: { venue: Venue; label: string }[] = [
   { venue: 'stock', label: 'Stocks' },
   { venue: 'crypto', label: 'Crypto' },
-  { venue: 'perpetual', label: 'Perpetuals' },
 ]
 
 export function SymbolBook({

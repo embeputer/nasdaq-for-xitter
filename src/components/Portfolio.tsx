@@ -5,6 +5,7 @@ import { marketValue, openPnl } from '../lib/account'
 import type { Viewer } from '../lib/api'
 import type { Fill, Position, Quote } from '../types'
 import { AdminComposer } from './AdminComposer'
+import { LaunchForm } from './LaunchForm'
 
 export function Portfolio({
   viewer,
@@ -12,6 +13,7 @@ export function Portfolio({
   fills,
   quotes,
   desks,
+  nqfxCents,
   onClose,
   onOpened,
 }: {
@@ -20,6 +22,7 @@ export function Portfolio({
   fills: Fill[]
   quotes: Record<string, Quote>
   desks: string[]
+  nqfxCents: number
   onClose: (position: Position, cash: boolean) => Promise<void>
   onOpened: () => void
 }) {
@@ -70,10 +73,12 @@ export function Portfolio({
       <h1>{formatUsd(invested)}</h1>
       <div className="stats">
         <Stat label="Open P&L" value={formatUsd(pnl, true)} tone={pnlClass(pnl)} />
+        <Stat label="NQFX" value={formatUsd(nqfxCents / 100)} />
         <Stat label="Positions" value={String(mine.length)} />
         <Stat label="Account" value={`@${viewer.screenName}`} />
         <Stat label="Role" value={viewer.admin ? 'Admin' : 'Member'} />
       </div>
+      <LaunchForm nqfxCents={nqfxCents} onLaunched={onOpened} />
       {viewer.admin ? <AdminComposer onOpened={onOpened} /> : null}
       <section className="holdings">
         <h2>{viewer.admin ? 'Book' : 'Positions'}</h2>

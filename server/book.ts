@@ -1,4 +1,4 @@
-export type Venue = 'stock' | 'crypto' | 'perpetual'
+export type Venue = 'stock' | 'crypto' | 'perpetual' | 'launch'
 
 export type Person = {
   id: string

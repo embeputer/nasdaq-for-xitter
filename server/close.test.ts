@@ -30,6 +30,11 @@ function order(amount: number, price: number, now: number) {
   return { venue: 'stock' as const, symbol: 'NVDA', name: 'NVIDIA', label: 'NVDA', person, amount, price, now }
 }
 
+async function fund(ledger: ReturnType<typeof memoryStore>, nasdaqCents: number, nyseCents?: number) {
+  await ledger.openPadding('nasdaq', nasdaqCents, 0, {})
+  if (nyseCents !== undefined) await ledger.openPadding('NYSE', nyseCents, 0, {})
+}
+
 describe('payout plan', () => {
   const position: Position = {
     id: 'pos:stock:NVDA:ada',
@@ -43,32 +48,54 @@ describe('payout plan', () => {
     openedAt: 5,
   }
 
-  it('splits the current value across the desks that were paid', () => {
+  it('pays the earliest desk, then the other desk padding', () => {
+    const payments = [
+      { ...row('1', 'nasdaq', 1000), status: 'filled' as const, detail: 'stock:NVDA' },
+      { ...row('2', 'NYSE', 500), status: 'filled' as const, detail: 'stock:NVDA' },
+      { ...row('3', 'nasdaq', 100), status: 'skipped' as const, detail: 'stock:NVDA' },
+      { ...row('4', 'nasdaq', 100, 'bob'), status: 'filled' as const, detail: 'stock:NVDA' },
+    ]
+    const desks = [
+      { screenName: 'nasdaq', canSend: true, maxCents: 100_000 },
+      { screenName: 'NYSE', canSend: true, maxCents: 100_000 },
+    ]
     const planned = planPayout({
       position,
       price: 20,
-      payments: [
-        { ...row('1', 'nasdaq', 1000), status: 'filled', detail: 'stock:NVDA' },
-        { ...row('2', 'NYSE', 500), status: 'filled', detail: 'stock:NVDA' },
-        { ...row('3', 'nasdaq', 100), status: 'skipped', detail: 'stock:NVDA' },
-        { ...row('4', 'nasdaq', 100, 'bob'), status: 'filled', detail: 'stock:NVDA' },
-      ],
-      desks: [
-        { screenName: 'nasdaq', canSend: true, maxCents: 100_000 },
-        { screenName: 'NYSE', canSend: true, maxCents: 100_000 },
-      ],
+      payments,
+      padding: { nasdaq: 100, nyse: 5000 },
+      balances: null,
+      desks,
     })
     expect(planned.ok).toBe(true)
     if (!planned.ok) return
     expect(planned.plan.cents).toBe(3000)
     expect(planned.plan.transfers.map((transfer) => [transfer.desk, transfer.cents])).toEqual([
-      ['nasdaq', 2000],
-      ['nyse', 1000],
+      ['nasdaq', 1100],
+      ['nyse', 1900],
     ])
+    expect(planned.plan.reserves).toEqual([
+      { desk: 'nasdaq', cents: 100 },
+      { desk: 'nyse', cents: 1400 },
+    ])
+    expect(planned.plan.credit).toEqual([])
     expect(planned.plan.transfers.every((transfer) => transfer.note.length <= 140 && transfer.note !== REFUND_NOTE)).toBe(true)
     expect(new Set(planned.plan.transfers.map((transfer) => transfer.key)).size).toBe(2)
     const saved = readPayout(JSON.stringify(planned.plan))
     expect(saved !== 'bad' && saved?.cents).toBe(3000)
+
+    const covered = planPayout({
+      position,
+      price: 20,
+      payments,
+      padding: { nasdaq: 10_000, nyse: 5000 },
+      balances: null,
+      desks,
+    })
+    expect(covered.ok).toBe(true)
+    if (!covered.ok) return
+    expect(covered.plan.transfers.map((transfer) => [transfer.desk, transfer.cents])).toEqual([['nasdaq', 3000]])
+    expect(covered.plan.reserves).toEqual([{ desk: 'nasdaq', cents: 2000 }])
   })
 
   it('breaks a payout into the send limit', () => {
@@ -76,6 +103,8 @@ describe('payout plan', () => {
       position: { ...position, qty: 250, avgPrice: 10 },
       price: 10,
       payments: [{ ...row('1', 'nasdaq', 250_000), status: 'filled', detail: 'stock:NVDA' }],
+      padding: {},
+      balances: null,
       desks: [{ screenName: 'nasdaq', canSend: true, maxCents: 100_000 }],
     })
     expect(planned.ok).toBe(true)
@@ -88,6 +117,8 @@ describe('payout plan', () => {
       position,
       price: 20,
       payments: [],
+      padding: {},
+      balances: null,
       desks: [{ screenName: 'nasdaq', canSend: true, maxCents: 100_000 }],
     })
     expect(planned.ok).toBe(false)
@@ -108,6 +139,7 @@ describe('cash out', () => {
   it('sends the current value once, then closes the book', async () => {
     const ledger = memoryStore()
     await ledger.fillPayment(row('1', 'nasdaq', 1000), order(10, 10, 5))
+    await fund(ledger, 1000)
     const paid: { cents: number; key: string; to: string }[] = []
     const run = (price: number) =>
       cashOut({
@@ -127,6 +159,7 @@ describe('cash out', () => {
     const fills = await ledger.fills(5)
     expect(fills[0]?.side).toBe('sell')
     expect(fills[0]?.price).toBe(12)
+    expect(await ledger.paddingCents('nasdaq')).toBe(800)
     const second = await run(99)
     expect(second.ok).toBe(false)
     expect(paid).toHaveLength(1)
@@ -135,6 +168,7 @@ describe('cash out', () => {
   it('leaves the position open when the send fails, and a retry pays the same amount', async () => {
     const ledger = memoryStore()
     await ledger.fillPayment(row('1', 'nasdaq', 1000), order(10, 10, 5))
+    await fund(ledger, 1000)
     const position = (await ledger.positions())[0]!
     let fail = true
     const paid: { cents: number; key: string }[] = []
@@ -163,11 +197,13 @@ describe('cash out', () => {
     expect(paid.map((item) => item.cents)).toEqual([1200, 1200])
     expect(paid[1]?.key).toBe(paid[0]?.key)
     expect((await ledger.fills(5))[0]?.price).toBe(12)
+    expect(await ledger.paddingCents('nasdaq')).toBe(800)
   })
 
   it('does not pay again when the position changed after a payout started', async () => {
     const ledger = memoryStore()
     await ledger.fillPayment(row('1', 'nasdaq', 1000), order(10, 10, 5))
+    await fund(ledger, 1000)
     const position = (await ledger.positions())[0]!
     let calls = 0
     const run = () =>
@@ -245,6 +281,7 @@ describe('cash out', () => {
   it('does not record a payout when the send limit cannot be read', async () => {
     const ledger = memoryStore()
     await ledger.fillPayment(row('1', 'nasdaq', 1000), order(10, 10, 5))
+    await fund(ledger, 1000)
     const position = (await ledger.positions())[0]!
     const result = await cashOut({
       ledger,
@@ -260,12 +297,14 @@ describe('cash out', () => {
     })
     expect(result.ok).toBe(false)
     expect(await ledger.meta(payoutMarker(position))).toBeNull()
+    expect(await ledger.paddingCents('nasdaq')).toBe(1000)
     expect(await ledger.positions()).toHaveLength(1)
   })
 
   it('does not close a position that grew while the payout was sending', async () => {
     const ledger = memoryStore()
     await ledger.fillPayment(row('1', 'nasdaq', 1000), order(10, 10, 5))
+    await fund(ledger, 1000)
     const result = await cashOut({
       ledger,
       id: 'pos:stock:NVDA:ada',
@@ -289,6 +328,7 @@ describe('cash out', () => {
     const ledger = memoryStore()
     await ledger.fillPayment(row('1', 'nasdaq', 1000), order(10, 10, 5))
     await ledger.fillPayment(row('2', 'NYSE', 500), order(5, 10, 6))
+    await fund(ledger, 0, 2000)
     const keys: string[] = []
     let attempts = 0
     const run = () =>
@@ -310,5 +350,73 @@ describe('cash out', () => {
     expect(done).toMatchObject({ ok: true, cents: 3000 })
     expect(keys.slice(2)).toEqual(keys.slice(0, 2))
     expect(await ledger.positions()).toHaveLength(0)
+    expect(await ledger.paddingCents('nyse')).toBe(500)
+  })
+
+  it('leaves the position open when the padding fund cannot cover the gain', async () => {
+    const ledger = memoryStore()
+    await ledger.fillPayment(row('1', 'nasdaq', 1000), order(10, 10, 5))
+    await fund(ledger, 0)
+    const position = (await ledger.positions())[0]!
+    let calls = 0
+    const result = await cashOut({
+      ledger,
+      id: position.id,
+      price: 50,
+      desks: [nasdaq],
+      limit: async () => 100_000,
+      pay: async () => {
+        calls += 1
+      },
+    })
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.error).toBe('short_fund')
+    expect(calls).toBe(0)
+    expect(await ledger.meta(payoutMarker(position))).toBeNull()
+    expect(await ledger.paddingCents('nasdaq')).toBe(0)
+    expect(await ledger.positions()).toHaveLength(1)
+  })
+
+  it('returns unused principal to the padding fund after the send', async () => {
+    const ledger = memoryStore()
+    await ledger.fillPayment(row('1', 'nasdaq', 1000), order(10, 10, 5))
+    await fund(ledger, 0)
+    const result = await cashOut({
+      ledger,
+      id: 'pos:stock:NVDA:ada',
+      price: 8,
+      desks: [nasdaq],
+      limit: async () => 100_000,
+      pay: async () => undefined,
+    })
+    expect(result).toMatchObject({ ok: true, cents: 800, screenName: 'ada' })
+    expect(await ledger.paddingCents('nasdaq')).toBe(200)
+    expect(await ledger.positions()).toHaveLength(0)
+  })
+
+  it('does not reserve padding when the live balance cannot be read', async () => {
+    const ledger = memoryStore()
+    await ledger.fillPayment(row('1', 'nasdaq', 1000), order(10, 10, 5))
+    await fund(ledger, 1000)
+    const position = (await ledger.positions())[0]!
+    const result = await cashOut({
+      ledger,
+      id: position.id,
+      price: 12,
+      desks: [nasdaq],
+      limit: async () => 100_000,
+      balance: async () => {
+        throw new Error('wallet_down')
+      },
+      pay: async () => {
+        throw new Error('should not send')
+      },
+    })
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.error).toBe('payout_failed')
+    expect(await ledger.meta(payoutMarker(position))).toBeNull()
+    expect(await ledger.paddingCents('nasdaq')).toBe(1000)
   })
 })

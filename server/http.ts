@@ -3,7 +3,8 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { fileBuy, fileClose, samePerson, type Person } from './book.ts'
 import { getCandles, getQuotes, isInterval, parseId, searchMarket } from './market.ts'
 import { cashOut } from './close.ts'
-import { adminNames, findPerson, fetchMe, loadDesks, sendPayout, transferLimit } from './money.ts'
+import { payoutCents } from './payout.ts'
+import { adminNames, findPerson, fetchMe, loadDesks, readWallet, sendPayout, transferLimit } from './money.ts'
 import { runIngest } from './ingest.ts'
 import {
   clientDocument,
@@ -35,7 +36,7 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse): Prom
         .map((id) => id.trim())
         .filter(Boolean)
         .slice(0, 40)
-      send(res, 200, { quotes: await getQuotes(ids) })
+      send(res, 200, { quotes: await quotesFor(ids) })
       return
     }
     if (url.pathname === '/api/candles') {
@@ -43,6 +44,11 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse): Prom
       const interval = url.searchParams.get('interval') ?? '1m'
       if (!isInterval(interval)) {
         send(res, 400, { error: 'bad_interval' })
+        return
+      }
+      const parsed = parseId(id)
+      if (parsed?.venue === 'launch') {
+        send(res, 200, { candles: await (await openLedger()).launchCandles(parsed.symbol, interval) })
         return
       }
       send(res, 200, { candles: await getCandles(id, interval) })
@@ -102,17 +108,23 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse): Prom
     }
     if (url.pathname === '/api/book') {
       const ledger = await openLedger()
+      const viewer = await viewerFrom(req)
       const desks = (await loadDesks()).map((desk) => desk.screenName)
       send(res, 200, {
         positions: await ledger.positions(),
         fills: await ledger.fills(40),
         desks,
         durable: durableStorage(),
+        nqfxCents: viewer ? await ledger.vaultCents(viewer.screenName) : 0,
       })
       return
     }
     if (url.pathname === '/api/positions/open' && req.method === 'POST') {
       await openPosition(req, res)
+      return
+    }
+    if (url.pathname === '/api/launches' && req.method === 'POST') {
+      await launchStock(req, res)
       return
     }
     if (url.pathname === '/api/positions/close' && req.method === 'POST') {
@@ -235,6 +247,14 @@ async function openPosition(req: IncomingMessage, res: ServerResponse) {
     send(res, 400, { error: 'bad_order' })
     return
   }
+  if (parsed.venue === 'perpetual') {
+    send(res, 400, { error: 'closed', message: 'Perpetuals are closed.' })
+    return
+  }
+  if (parsed.venue === 'launch') {
+    send(res, 400, { error: 'closed', message: 'Launch a user stock from your portfolio.' })
+    return
+  }
   const person = await findPerson(screenName)
   if (!person) {
     send(res, 400, { error: 'no_person' })
@@ -283,13 +303,17 @@ async function closePosition(req: IncomingMessage, res: ServerResponse) {
     send(res, 403, { error: 'forbidden', message: 'You can only close your own position.' })
     return
   }
-  const [quote] = await getQuotes([`${position.venue}:${position.symbol}`])
+  const quote =
+    position.venue === 'launch'
+      ? await ledger.launchQuote(position.symbol)
+      : (await getQuotes([`${position.venue}:${position.symbol}`]))[0]
   if (!quote || !(quote.price > 0)) {
     send(res, 502, { error: 'no_price', message: "There's no price for this yet, so it can't be closed." })
     return
   }
   if (!cash) {
     await ledger.updateBook((positions) => fileClose(positions, id, quote.price))
+    if (position.venue === 'launch') await ledger.settleLaunch(position, payoutCents(position.qty, quote.price) ?? 0)
     send(res, 200, { ok: true, cash: false })
     return
   }
@@ -300,14 +324,56 @@ async function closePosition(req: IncomingMessage, res: ServerResponse) {
       price: quote.price,
       desks: await loadDesks(),
       limit: (desk) => transferLimit(desk.writeToken),
+      balance: async (desk) => (await readWallet(desk.readToken)).balanceCents,
       pay: (desk, to, cents, note, key) => sendPayout(desk.writeToken, to, cents, note, key),
     })
     if (!result.ok) {
       send(res, result.status, { error: result.error, message: result.message })
       return
     }
+    if (position.venue === 'launch') await ledger.settleLaunch(position, result.cents)
     send(res, 200, { ok: true, cash: true, cents: result.cents, screenName: result.screenName })
   })
+}
+
+async function launchStock(req: IncomingMessage, res: ServerResponse) {
+  const viewer = await viewerFrom(req)
+  if (!viewer) {
+    send(res, 401, { error: 'unauthorized', message: 'Log in to launch a stock.' })
+    return
+  }
+  const body = await readJson(req)
+  const ledger = await openLedger()
+  const opened = await ledger.openLaunch({
+    person: viewer,
+    symbol: text(body.symbol),
+    name: text(body.name),
+    liquidityCents: moneyCents(body.liquidity),
+    investCents: moneyCents(body.invest),
+    now: Date.now(),
+  })
+  if (!opened.ok) {
+    const status = opened.error === 'taken' || opened.error === 'poor' ? 409 : 400
+    send(res, status, { error: opened.error, message: opened.message })
+    return
+  }
+  send(res, 200, { ok: true, symbol: opened.launch.symbol, label: opened.launch.label })
+}
+
+async function quotesFor(ids: string[]) {
+  const launches: string[] = []
+  const rest: string[] = []
+  for (const id of ids) {
+    const parsed = parseId(id)
+    if (parsed?.venue === 'launch') launches.push(parsed.symbol)
+    else rest.push(id)
+  }
+  const ledger = await openLedger()
+  const [external, owned] = await Promise.all([
+    rest.length ? getQuotes(rest) : Promise.resolve([]),
+    ledger.launchQuotes(launches),
+  ])
+  return [...external, ...owned]
 }
 
 const closeLocks = new Map<string, Promise<void>>()
@@ -358,7 +424,8 @@ async function ensureSessionSecret() {
   }
 }
 
-function labelFor(venue: 'stock' | 'crypto' | 'perpetual', symbol: string): string {
+function labelFor(venue: 'stock' | 'crypto' | 'perpetual' | 'launch', symbol: string): string {
+  if (venue === 'launch') return `xit${symbol}`
   if (venue === 'perpetual') return `${symbol}-PERP`
   if (venue === 'crypto' && symbol.endsWith('USDC')) return `${symbol.slice(0, -4)}-USDC`
   if (venue === 'crypto' && symbol.endsWith('USDT')) return symbol.slice(0, -4)
@@ -416,6 +483,13 @@ function readJson(req: IncomingMessage): Promise<Record<string, unknown>> {
     })
     req.on('error', reject)
   })
+}
+
+function moneyCents(value: unknown): number {
+  if (value === '' || value == null) return 0
+  const amount = typeof value === 'number' ? value : Number(value)
+  if (!Number.isFinite(amount)) return Number.NaN
+  return Math.round(amount * 100)
 }
 
 function text(value: unknown): string {
