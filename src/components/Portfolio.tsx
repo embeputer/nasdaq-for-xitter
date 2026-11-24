@@ -49,8 +49,14 @@ export function Portfolio({
   const own = positions.filter((position) => ownedBy(position, account.screenName))
   const listed = viewer.admin ? positions.filter((position) => !ownedBy(position, viewer.screenName)) : own
   const counted = viewer.admin ? positions : own
-  const invested = counted.reduce((sum, position) => sum + marketValue(position, quotes[`${position.venue}:${position.symbol}`]?.price), 0)
-  const pnl = counted.reduce((sum, position) => sum + openPnl(position, quotes[`${position.venue}:${position.symbol}`]?.price), 0)
+  const valueOf = (rows: Position[]) =>
+    rows.reduce((sum, position) => sum + marketValue(position, quotes[`${position.venue}:${position.symbol}`]?.price), 0)
+  const pnlOf = (rows: Position[]) =>
+    rows.reduce((sum, position) => sum + openPnl(position, quotes[`${position.venue}:${position.symbol}`]?.price), 0)
+  const ownValue = valueOf(own)
+  const ownPnl = pnlOf(own)
+  const bookValue = valueOf(positions)
+  const bookPnl = pnlOf(positions)
   const names = desks.length ? desks.map((desk) => `@${desk}`).join(' or ') : 'the desk'
   const pending = useRef(false)
   const [busy, setBusy] = useState(false)
@@ -123,10 +129,28 @@ export function Portfolio({
 
   return (
     <main className="sheet">
-      <p className="value-label">{viewer.admin ? 'Every position' : 'Your book'}</p>
-      <h1>{formatUsd(invested)}</h1>
+      {viewer.admin ? (
+        <div className="totals">
+          <div>
+            <p className="value-label">Your book</p>
+            <h1>{formatUsd(ownValue)}</h1>
+          </div>
+          <div>
+            <p className="value-label">Every position</p>
+            <h1>
+              {formatUsd(bookValue)}
+              <em className={pnlClass(bookPnl)}>{formatUsd(bookPnl, true)}</em>
+            </h1>
+          </div>
+        </div>
+      ) : (
+        <>
+          <p className="value-label">Your book</p>
+          <h1>{formatUsd(ownValue)}</h1>
+        </>
+      )}
       <div className="stats">
-        <Stat label="Open P&L" value={formatUsd(pnl, true)} tone={pnlClass(pnl)} />
+        <Stat label="Open P&L" value={formatUsd(ownPnl, true)} tone={pnlClass(ownPnl)} />
         <Stat label="Cash" value={formatUsd(nqfxCents / 100)} />
         <Stat label="Positions" value={String(counted.length)} />
         <Stat label="Account" value={`@${viewer.screenName}`} />

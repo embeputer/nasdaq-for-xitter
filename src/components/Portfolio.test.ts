@@ -106,4 +106,41 @@ describe('withdraw button', () => {
     expect(member).not.toContain('Your positions')
     expect(member).toContain('>SPY<')
   })
+
+  it('shows an admin their own book beside the whole book', () => {
+    const quote = (symbol: string, price: number) => ({
+      id: `stock:${symbol}`,
+      venue: 'stock' as const,
+      symbol,
+      name: symbol,
+      price,
+      change: 0,
+      changePct: 0,
+      marketState: null,
+      asOf: 1,
+    })
+    const html = renderToStaticMarkup(
+      createElement(Portfolio, {
+        viewer: { ...viewer, admin: true },
+        positions: [position('1', 'ember', 'SPY'), position('2', 'ada', 'NVDA')],
+        fills: [],
+        quotes: { 'stock:SPY': quote('SPY', 15), 'stock:NVDA': quote('NVDA', 7) },
+        desks: ['nasdaq'],
+        nqfxCents: 0,
+        onWithdraw: () => undefined,
+        onClose: async () => undefined,
+        onOpened: () => undefined,
+      }),
+    )
+    const head = html.slice(0, html.indexOf('class="stats"'))
+    expect(head).toContain('Your book')
+    expect(head).toContain('>$15.00<')
+    expect(head).toContain('Every position')
+    expect(head).toContain('>$22.00<')
+    expect(head).toContain('+$2.00')
+    const stats = html.slice(html.indexOf('class="stats"'), html.indexOf('pill-row'))
+    expect(stats).toContain('Open P&amp;L')
+    expect(stats).toContain('+$5.00')
+    expect(stats).not.toContain('+$2.00')
+  })
 })
