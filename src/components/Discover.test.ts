@@ -49,4 +49,48 @@ describe('chart heading', () => {
     expect(card).toContain('@z1xus')
     expect(card).toContain('https://xitter.space/z1xus')
   })
+
+  it('places the xitStock creator on the name line', () => {
+    const holder = { ...person, screenName: 'toejoke', name: 'toejoke' }
+    const rayman: Position = {
+      ...ant,
+      id: 'pos:launch:RAYMAN:toejoke',
+      venue: 'launch',
+      symbol: 'RAYMAN',
+      name: 'Rayman',
+      label: 'xitRAYMAN',
+      person: holder,
+    }
+    const html = renderToStaticMarkup(
+      createElement(Discover, {
+        positions: [rayman],
+        quotes: {
+          'launch:RAYMAN': {
+            id: 'launch:RAYMAN',
+            venue: 'launch',
+            symbol: 'RAYMAN',
+            name: 'Rayman',
+            price: 1,
+            change: 0,
+            changePct: 0,
+            marketState: null,
+            asOf: 1,
+            creator: 'Rayman',
+          },
+        },
+        viewer: null,
+        desks: ['nasdaq'],
+        selected: rayman,
+        onSelect: () => undefined,
+        candles: [],
+        chartError: null,
+      }),
+    )
+    const start = html.indexOf('label-name')
+    const nameLine = html.slice(start, html.indexOf('</p>', start))
+    expect(nameLine).toContain('Rayman')
+    expect(nameLine).toContain('https://xitter.space/Rayman')
+    expect(nameLine).toContain('@Rayman')
+    expect(html).toContain('Rayman · xitRAYMAN')
+  })
 })

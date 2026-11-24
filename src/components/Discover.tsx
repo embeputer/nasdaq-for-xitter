@@ -82,12 +82,14 @@ export function Discover({
                   {shortName(selected.name)} · {selected.label}
                   {selected.venue === 'crypto' || selected.venue === 'perpetual' ? <span className="all-day">Trades all day</span> : null}
                 </h2>
-                <p className="label-name">{selected.name}</p>
-                {selected.venue === 'launch' && quote?.creator && quote.creator.toLowerCase() !== selected.person.screenName.toLowerCase() ? (
-                  <a className="creator" href={`https://xitter.space/${encodeURIComponent(quote.creator)}`}>
-                    @{quote.creator}
-                  </a>
-                ) : null}
+                <p className="label-name">
+                  <span>{selected.name}</span>
+                  {selected.venue === 'launch' && quote?.creator && quote.creator.toLowerCase() !== selected.person.screenName.toLowerCase() ? (
+                    <a className="creator" href={`https://xitter.space/${encodeURIComponent(quote.creator)}`}>
+                      @{quote.creator}
+                    </a>
+                  ) : null}
+                </p>
               </div>
               <div className="last">
                 <strong>{quote ? formatPrice(quote.price, selected.venue) : '—'}</strong>
