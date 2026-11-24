@@ -4,6 +4,8 @@ import { marketValue, openPnl } from '../lib/account'
 import type { Candle, Instrument, Position, Quote } from '../types'
 import type { Viewer } from '../lib/api'
 import { ChartPane } from './ChartPane'
+import { AssetMark } from './AssetMark'
+import { LogoMark } from './LogoMark'
 
 export function positionGroups(positions: Position[]): { screenName: string; positions: Position[] }[] {
   const rows = new Map<string, Position[]>()
@@ -31,6 +33,7 @@ export function Discover({
   onSelect,
   candles,
   chartError,
+  onLogoSaved,
 }: {
   positions: Position[]
   quotes: Record<string, Quote>
@@ -40,6 +43,7 @@ export function Discover({
   onSelect: (position: Position) => void
   candles: Candle[]
   chartError: string | null
+  onLogoSaved?: () => void
 }) {
   const instrument: Instrument | null = selected
     ? {
@@ -93,9 +97,19 @@ export function Discover({
                             className={position.id === selected?.id ? 'name selected' : 'name'}
                             onClick={() => onSelect(position)}
                           >
-                            <span>
-                              <strong>{position.label}</strong>
-                              <em>{position.name}</em>
+                            <span className="name-id">
+                              {position.venue === 'launch' ? (
+                                <AssetMark
+                                  venue="launch"
+                                  symbol={position.symbol}
+                                  label={position.label}
+                                  logo={mark?.logo}
+                                />
+                              ) : null}
+                              <span>
+                                <strong>{position.label}</strong>
+                                <em>{position.name}</em>
+                              </span>
                             </span>
                             <span className="name-px">
                               <strong>{formatUsd(marketValue(position, mark?.price))}</strong>
@@ -123,7 +137,19 @@ export function Discover({
         {selected ? (
           <>
             <header className="quote-head">
-              <div>
+              <div className="quote-title">
+                {selected.venue === 'launch' ? (
+                  <LogoMark
+                    symbol={selected.symbol}
+                    label={selected.label}
+                    src={quote?.logo}
+                    editable={Boolean(
+                      viewer && quote?.creator && sameName(viewer.screenName, quote.creator),
+                    )}
+                    onSaved={() => onLogoSaved?.()}
+                  />
+                ) : null}
+                <div>
                 <h2>
                   {shortName(selected.name)} · {selected.label}
                   {selected.venue === 'crypto' || selected.venue === 'perpetual' ? <span className="all-day">Trades all day</span> : null}
@@ -136,6 +162,7 @@ export function Discover({
                     </a>
                   ) : null}
                 </p>
+                </div>
               </div>
               <div className="last">
                 <strong>{quote ? formatPrice(quote.price, selected.venue) : '—'}</strong>
@@ -180,6 +207,10 @@ export function Discover({
       </section>
     </div>
   )
+}
+
+function sameName(a: string, b: string): boolean {
+  return a.trim().replace(/^@/, '').toLowerCase() === b.trim().replace(/^@/, '').toLowerCase()
 }
 
 export function shortName(name: string): string {

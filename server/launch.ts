@@ -12,6 +12,8 @@ export type Launch = {
   prevPrice: number
   openedAt: number
   prints: { time: number; price: number }[]
+  logo?: 'png' | 'jpg' | 'webp' | 'gif'
+  logoRev?: number
 }
 
 export type LaunchFailure = {
@@ -239,6 +241,7 @@ export function launchQuote(launch: Launch, now: number): Quote | null {
     marketState: null,
     asOf: now,
     creator: launch.creator.screenName || undefined,
+    logo: launch.logo ? `/api/logos/${launch.symbol}?v=${launch.logoRev ?? 1}` : undefined,
   }
 }
 

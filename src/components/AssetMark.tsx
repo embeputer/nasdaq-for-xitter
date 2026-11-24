@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { Venue } from '../types'
 
 export function assetIcon(venue: Venue, symbol: string): string | null {
@@ -20,9 +20,23 @@ export function assetIcon(venue: Venue, symbol: string): string | null {
   return null
 }
 
-export function AssetMark({ venue, symbol, label }: { venue: Venue; symbol: string; label: string }) {
+export function AssetMark({
+  venue,
+  symbol,
+  label,
+  logo,
+}: {
+  venue: Venue
+  symbol: string
+  label: string
+  logo?: string
+}) {
   const [failed, setFailed] = useState(false)
-  const src = failed ? null : assetIcon(venue, symbol)
-  if (!src) return <span className="avatar-fallback">{(label || symbol).slice(0, 1)}</span>
+  useEffect(() => {
+    setFailed(false)
+  }, [logo, venue, symbol])
+  const src = failed ? null : logo || assetIcon(venue, symbol)
+  const letter = (venue === 'launch' ? symbol : label || symbol).slice(0, 1)
+  if (!src) return <span className="avatar-fallback">{letter}</span>
   return <img src={src} alt="" onError={() => setFailed(true)} />
 }

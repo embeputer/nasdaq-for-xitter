@@ -24,6 +24,8 @@ import {
 import { ephemeralHost, readEnv } from './env.ts'
 import { durableStorage, store as openLedger, type SessionUser } from './store.ts'
 import { searchPeople } from './xitter.ts'
+import { LOGO_BAD, LOGO_MAX_BYTES, readLogo } from './logo.ts'
+import { dirname, join } from 'node:path'
 
 export async function handleApi(req: IncomingMessage, res: ServerResponse): Promise<void> {
   await ensureSessionSecret()
@@ -31,6 +33,15 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse): Prom
   const origin = publicOrigin(req)
   const secure = secureOrigin(origin)
   try {
+    const logoMatch = /^\/api\/logos\/([A-Za-z]{2,8})$/.exec(url.pathname)
+    if (logoMatch && req.method === 'GET') {
+      await sendLogo(res, logoMatch[1] ?? '')
+      return
+    }
+    if (logoMatch && req.method === 'POST') {
+      await replaceLogo(req, res, logoMatch[1] ?? '')
+      return
+    }
     if (url.pathname === '/api/quotes') {
       const ids = (url.searchParams.get('ids') ?? '')
         .split(',')
@@ -373,6 +384,44 @@ async function withdrawVault(req: IncomingMessage, res: ServerResponse) {
   })
 }
 
+function logoDir(): string {
+  return join(dirname(process.env.LEDGER_FILE || '.data/ledger.json'), 'logos')
+}
+
+async function sendLogo(res: ServerResponse, symbol: string) {
+  const file = await readLogo(logoDir(), symbol.toUpperCase())
+  if (!file) {
+    send(res, 404, { error: 'missing', message: 'That stock has no logo.' })
+    return
+  }
+  res.statusCode = 200
+  res.setHeader('content-type', file.type)
+  res.setHeader('cache-control', 'public, max-age=86400')
+  res.setHeader('x-content-type-options', 'nosniff')
+  res.end(file.bytes)
+}
+
+async function replaceLogo(req: IncomingMessage, res: ServerResponse, symbol: string) {
+  const viewer = await viewerFrom(req)
+  if (!viewer) {
+    send(res, 401, { error: 'unauthorized', message: 'Log in to change a logo.' })
+    return
+  }
+  const bytes = await readRaw(req, LOGO_MAX_BYTES)
+  if (bytes === 'too-big') {
+    send(res, 413, { error: 'bad_logo', message: LOGO_BAD })
+    return
+  }
+  const ledger = await openLedger()
+  const saved = await ledger.setLaunchLogo(symbol, viewer, bytes)
+  if (!saved.ok) {
+    const status = saved.error === 'forbidden' ? 403 : saved.error === 'missing' ? 404 : 400
+    send(res, status, { error: saved.error, message: saved.message })
+    return
+  }
+  send(res, 200, { ok: true, rev: saved.rev })
+}
+
 async function launchStock(req: IncomingMessage, res: ServerResponse) {
   const viewer = await viewerFrom(req)
   if (!viewer) {
@@ -490,6 +539,30 @@ function redirect(res: ServerResponse, location: string, cookies: string[]) {
   res.setHeader('cache-control', 'no-store')
   if (cookies.length) res.setHeader('set-cookie', cookies)
   res.end()
+}
+
+function readRaw(req: IncomingMessage, max: number): Promise<Buffer | 'too-big'> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = []
+    let size = 0
+    let over = false
+    req.on('data', (chunk: Buffer) => {
+      size += chunk.length
+      if (size > max) {
+        over = true
+        resolve('too-big')
+        req.destroy()
+        return
+      }
+      chunks.push(chunk)
+    })
+    req.on('end', () => {
+      if (!over) resolve(Buffer.concat(chunks))
+    })
+    req.on('error', (error) => {
+      if (!over) reject(error)
+    })
+  })
 }
 
 function readJson(req: IncomingMessage): Promise<Record<string, unknown>> {

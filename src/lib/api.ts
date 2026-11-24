@@ -69,7 +69,13 @@ export async function openFor(id: string, amount: number, screenName: string): P
   return body.screenName ?? screenName
 }
 
-export async function launchFor(symbol: string, name: string, liquidity: number, invest: number): Promise<string> {
+export async function launchFor(
+  symbol: string,
+  name: string,
+  liquidity: number,
+  invest: number,
+  logo?: Blob,
+): Promise<string> {
   const res = await fetch('/api/launches', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -77,7 +83,25 @@ export async function launchFor(symbol: string, name: string, liquidity: number,
   })
   const body = (await res.json().catch(() => ({}))) as { message?: string; label?: string }
   if (!res.ok) throw new Error(body.message || 'Could not launch that stock.')
-  return body.label ?? `xit${symbol.toUpperCase()}`
+  const label = body.label ?? `xit${symbol.toUpperCase()}`
+  if (!logo) return label
+  try {
+    await saveLogo(symbol, logo)
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : 'The logo did not save.'
+    throw new Error(`${label} is live. ${reason} Open the chart and click the mark.`)
+  }
+  return label
+}
+
+export async function saveLogo(symbol: string, file: Blob): Promise<void> {
+  const res = await fetch(`/api/logos/${encodeURIComponent(symbol.toUpperCase())}`, {
+    method: 'POST',
+    headers: { 'content-type': file.type || 'application/octet-stream' },
+    body: file,
+  })
+  const body = (await res.json().catch(() => ({}))) as { message?: string }
+  if (!res.ok) throw new Error(body.message || 'Could not save that logo.')
 }
 
 export async function withdrawFor(amount: number): Promise<{ cents: number; screenName: string; short: boolean }> {

@@ -1,7 +1,7 @@
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import { LaunchForm, stepReady } from './LaunchForm.tsx'
+import { LAUNCH_STEPS, LaunchForm, stepReady } from './LaunchForm.tsx'
 
 const blank = { symbol: '', name: '', liquidity: '', invest: '' }
 
@@ -23,6 +23,8 @@ describe('launch form', () => {
     expect(stepReady('symbol', { ...blank, symbol: 'A' })).toBe(false)
     expect(stepReady('name', { ...blank, name: 'Yams' })).toBe(true)
     expect(stepReady('name', blank)).toBe(false)
+    expect(stepReady('logo', blank)).toBe(true)
+    expect(LAUNCH_STEPS.indexOf('logo')).toBeLessThan(LAUNCH_STEPS.indexOf('liquidity'))
     expect(stepReady('liquidity', { ...blank, liquidity: '100' })).toBe(true)
     expect(stepReady('liquidity', { ...blank, liquidity: '0.50' })).toBe(false)
     expect(stepReady('invest', blank)).toBe(true)
@@ -43,6 +45,23 @@ describe('launch form', () => {
     expect(html).toContain('$100.00')
     expect(html).toContain('None')
     expect(html).toContain('Launch xitYAMS')
+    expect(html).toContain('>Logo<')
+    expect(html).not.toContain('disabled')
+  })
+
+  it('asks for an optional logo before liquidity', () => {
+    const html = renderToStaticMarkup(
+      createElement(LaunchForm, {
+        nqfxCents: 25_000,
+        onLaunched: () => undefined,
+        onClose: () => undefined,
+        start: { step: 'logo', symbol: 'YAMS', name: 'Yams' },
+      }),
+    )
+    expect(html).toContain('id="launch-logo"')
+    expect(html).toContain('PNG, JPEG, WEBP, or GIF')
+    expect(html).toContain('Choose a picture')
+    expect(html).not.toContain('id="launch-liquidity"')
     expect(html).not.toContain('disabled')
   })
 })

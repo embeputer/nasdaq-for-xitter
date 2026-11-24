@@ -261,6 +261,16 @@ export default function App() {
           onSelect={(position: Position) => setSelectedId(position.id)}
           candles={candles}
           chartError={chartError}
+          onLogoSaved={() => {
+            if (!quoteIds.length) return
+            void fetchQuotes(quoteIds).then((rows) => {
+              setQuotes((current) => {
+                const next = { ...current }
+                for (const row of rows) next[row.id] = row
+                return next
+              })
+            })
+          }}
         />
       ) : view === 'pnl' ? (
         <Leaderboard positions={book.positions} quotes={quotes} scores={book.scores} />

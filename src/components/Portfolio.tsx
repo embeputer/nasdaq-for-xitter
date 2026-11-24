@@ -86,7 +86,12 @@ export function Portfolio({
             <span>{position.name}</span>
           </h3>
           <p className="who">
-            <AssetMark venue={position.venue} symbol={position.symbol} label={position.label} />
+            <AssetMark
+              venue={position.venue}
+              symbol={position.symbol}
+              label={position.label}
+              logo={quotes[`${position.venue}:${position.symbol}`]?.logo}
+            />
             <span>
               @{position.person.screenName}
               <span className="class-tag">{VENUE_LABEL[position.venue]}</span>

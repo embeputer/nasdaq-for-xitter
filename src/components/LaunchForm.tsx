@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { launchFor } from '../lib/api'
 import { formatUsd } from '../lib/format'
+import { LOGO_BAD, logoFileOk } from '../lib/logo'
 
-const STEPS = ['symbol', 'name', 'liquidity', 'invest', 'summary'] as const
-type Step = (typeof STEPS)[number]
+export const LAUNCH_STEPS = ['symbol', 'name', 'logo', 'liquidity', 'invest', 'summary'] as const
+type Step = (typeof LAUNCH_STEPS)[number]
 
 export function LaunchForm({
   nqfxCents,
@@ -21,6 +22,9 @@ export function LaunchForm({
   const [name, setName] = useState(start?.name ?? '')
   const [liquidityText, setLiquidityText] = useState(start?.liquidity ?? '')
   const [investText, setInvestText] = useState(start?.invest ?? '')
+  const [logoFile, setLogoFile] = useState<File | null>(null)
+  const [preview, setPreview] = useState<string | null>(null)
+  const logoInput = useRef<HTMLInputElement>(null)
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
 
@@ -43,9 +47,30 @@ export function LaunchForm({
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
 
+  useEffect(() => {
+    if (!logoFile) {
+      setPreview(null)
+      return
+    }
+    const url = URL.createObjectURL(logoFile)
+    setPreview(url)
+    return () => URL.revokeObjectURL(url)
+  }, [logoFile])
+
+  function chooseLogo(file: File | undefined) {
+    if (!file) return
+    if (!logoFileOk(file)) {
+      setLogoFile(null)
+      setNotice(LOGO_BAD)
+      return
+    }
+    setNotice(null)
+    setLogoFile(file)
+  }
+
   function go(forward: boolean) {
-    const index = STEPS.indexOf(step)
-    const next = STEPS[index + (forward ? 1 : -1)]
+    const index = LAUNCH_STEPS.indexOf(step)
+    const next = LAUNCH_STEPS[index + (forward ? 1 : -1)]
     if (!next) return
     if (forward && !nextOk) return
     setNotice(null)
@@ -56,7 +81,7 @@ export function LaunchForm({
     if (!launchReady || !ticker || !cleanedName) return
     setBusy(true)
     setNotice(null)
-    void launchFor(ticker, cleanedName, liquidityCents / 100, investCents / 100)
+    void launchFor(ticker, cleanedName, liquidityCents / 100, investCents / 100, logoFile ?? undefined)
       .then(() => {
         onLaunched()
       })
@@ -121,6 +146,42 @@ export function LaunchForm({
             />
           </>
         ) : null}
+        {step === 'logo' ? (
+          <>
+            <p className="logo-kicker">Logo</p>
+            <p className="hint">Optional. PNG, JPEG, WEBP, or GIF, up to 1 MB.</p>
+            <button type="button" className="logo-choose" onClick={() => logoInput.current?.click()}>
+              {logoFile ? 'Choose a different picture' : 'Choose a picture'}
+            </button>
+            <input
+              ref={logoInput}
+              id="launch-logo"
+              className="logo-file"
+              type="file"
+              aria-hidden="true"
+              tabIndex={-1}
+              accept="image/png,image/jpeg,image/webp,image/gif,.png,.jpg,.jpeg,.webp,.gif"
+              onChange={(event) => {
+                const file = event.target.files?.[0]
+                event.target.value = ''
+                chooseLogo(file)
+              }}
+            />
+            {preview ? <img className="logo-preview" src={preview} alt="" /> : null}
+            {logoFile ? (
+              <button
+                type="button"
+                className="text-btn"
+                onClick={() => {
+                  setLogoFile(null)
+                  setNotice(null)
+                }}
+              >
+                Remove
+              </button>
+            ) : null}
+          </>
+        ) : null}
         {step === 'liquidity' ? (
           <>
             <label htmlFor="launch-liquidity">Liquidity</label>
@@ -162,6 +223,10 @@ export function LaunchForm({
               <dd>{cleanedName ?? name}</dd>
             </div>
             <div>
+              <dt>Logo</dt>
+              <dd>{preview ? <img className="logo-preview" src={preview} alt="" /> : 'None'}</dd>
+            </div>
+            <div>
               <dt>Liquidity</dt>
               <dd>{Number.isFinite(liquidityCents) ? formatUsd(liquidityCents / 100) : '—'}</dd>
             </div>
@@ -200,6 +265,7 @@ export function stepReady(
 ): boolean {
   if (step === 'symbol') return cleanSymbol(input.symbol) !== null
   if (step === 'name') return cleanName(input.name) !== null
+  if (step === 'logo') return true
   if (step === 'liquidity') return centsOf(input.liquidity) >= 100
   return true
 }

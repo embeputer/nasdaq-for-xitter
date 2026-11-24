@@ -21,6 +21,7 @@ export type Quote = {
   marketState: string | null
   asOf: number
   creator?: string
+  logo?: string
 }
 
 export type Candle = {

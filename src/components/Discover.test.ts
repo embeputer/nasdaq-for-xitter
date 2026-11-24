@@ -99,6 +99,74 @@ describe('chart heading', () => {
     expect(nameLine).toContain('@Rayman')
     expect(html).toContain('Rayman · xitRAYMAN')
     expect(html).not.toContain('names board')
+    expect(html).not.toContain('Change the logo')
+  })
+
+  it('lets the creator replace the logo from the chart mark', () => {
+    const holder = { ...person, screenName: 'toejoke', name: 'toejoke' }
+    const rayman: Position = {
+      ...ant,
+      id: 'pos:launch:RAYMAN:toejoke',
+      venue: 'launch',
+      symbol: 'RAYMAN',
+      name: 'Rayman',
+      label: 'xitRAYMAN',
+      person: holder,
+    }
+    const quote = {
+      id: 'launch:RAYMAN',
+      venue: 'launch' as const,
+      symbol: 'RAYMAN',
+      name: 'Rayman',
+      price: 1,
+      change: 0,
+      changePct: 0,
+      marketState: null,
+      asOf: 1,
+      creator: 'Rayman',
+      logo: '/api/logos/RAYMAN?v=2',
+    }
+    const owned = renderToStaticMarkup(
+      createElement(Discover, {
+        positions: [rayman],
+        quotes: { 'launch:RAYMAN': quote },
+        viewer: { screenName: '@rayman', name: 'Rayman', avatarUrl: null, admin: false },
+        desks: ['nasdaq'],
+        selected: rayman,
+        onSelect: () => undefined,
+        candles: [],
+        chartError: null,
+      }),
+    )
+    expect(owned).toContain('aria-label="Change the logo for xitRAYMAN"')
+    expect(owned).toContain('/api/logos/RAYMAN?v=2')
+    const stranger = renderToStaticMarkup(
+      createElement(Discover, {
+        positions: [rayman],
+        quotes: { 'launch:RAYMAN': { ...quote, logo: undefined } },
+        viewer: { screenName: 'toejoke', name: 'toejoke', avatarUrl: null, admin: false },
+        desks: ['nasdaq'],
+        selected: rayman,
+        onSelect: () => undefined,
+        candles: [],
+        chartError: null,
+      }),
+    )
+    expect(stranger).not.toContain('Change the logo')
+    expect(stranger).toContain('>R<')
+    const stock = renderToStaticMarkup(
+      createElement(Discover, {
+        positions: [ant],
+        quotes: {},
+        viewer: { screenName: 'z1xus', name: 'z1xus', avatarUrl: null, admin: false },
+        desks: ['nasdaq'],
+        selected: ant,
+        onSelect: () => undefined,
+        candles: [],
+        chartError: null,
+      }),
+    )
+    expect(stock).not.toContain('Change the logo')
   })
 })
 

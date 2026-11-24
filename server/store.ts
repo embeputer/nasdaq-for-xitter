@@ -1,6 +1,7 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
-import { dirname } from 'node:path'
-import { fileBuy, type Fill, type Order, type Person, type Position } from './book.ts'
+import { tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
+import { fileBuy, samePerson, type Fill, type Order, type Person, type Position } from './book.ts'
 import { ephemeralHost } from './env.ts'
 import {
   cleanLaunchName,
@@ -18,6 +19,7 @@ import {
   type Launch,
   type LaunchFailure,
 } from './launch.ts'
+import { LOGO_BAD, LOGO_FORBIDDEN, LOGO_MISSING, sniffLogo, writeLogo } from './logo.ts'
 import {
   addLikes,
   addPadding,
@@ -105,6 +107,11 @@ export type Store = {
   }): Promise<
     { ok: true; launch: Launch } | LaunchFailure
   >
+  setLaunchLogo(
+    symbol: string,
+    person: Person,
+    bytes: Uint8Array,
+  ): Promise<{ ok: true; rev: number } | { ok: false; error: 'bad_logo' | 'missing' | 'forbidden'; message: string }>
   buyLaunch(row: PaymentRow, person: Person, symbol: string, now: number): Promise<'filled' | 'missing'>
   settleLaunch(position: Position, cents: number): Promise<void>
   paddingCents(desk: string): Promise<number>
@@ -150,7 +157,7 @@ type Doc = {
 
 const TERMINAL = new Set<PaymentStatus>(['filled', 'refunded', 'skipped', 'donated', 'vaulted'])
 
-export function memoryStore(): Store {
+export function memoryStore(logoDir = join(tmpdir(), 'larp-logos')): Store {
   const doc = emptyDoc()
   return storeFrom(
     () => doc,
@@ -165,6 +172,8 @@ export function memoryStore(): Store {
       doc.scores = next.scores
       doc.meta = next.meta
     },
+    (run) => run(),
+    logoDir,
   )
 }
 
@@ -194,6 +203,7 @@ export function fileStore(path: string): Store {
       writeDoc(path, doc)
     },
     lock,
+    join(dirname(path), 'logos'),
   )
 }
 
@@ -201,6 +211,7 @@ function storeFrom(
   read: () => Doc,
   write: (doc: Doc) => void | Promise<void>,
   lock: <T>(run: () => Promise<T>) => Promise<T> = (run) => run(),
+  logoDir = join(tmpdir(), 'larp-logos'),
 ): Store {
   async function edit(change: (doc: Doc) => void): Promise<Doc> {
     return lock(async () => {
@@ -321,6 +332,24 @@ function storeFrom(
     async launchCandles(symbol, interval) {
       const launch = read().launches[symbol]
       return launch ? toCandles(launch, interval) : []
+    },
+    async setLaunchLogo(symbol, person, bytes) {
+      const clean = cleanLaunchSymbol(symbol)
+      const kind = sniffLogo(bytes)
+      if (!clean || !kind) return { ok: false, error: 'bad_logo', message: LOGO_BAD }
+      return lock(async () => {
+        const doc = read()
+        const launch = doc.launches[clean]
+        if (!launch) return { ok: false, error: 'missing', message: LOGO_MISSING }
+        if (!samePerson(launch.creator.screenName, person.screenName)) {
+          return { ok: false, error: 'forbidden', message: LOGO_FORBIDDEN }
+        }
+        const rev = (launch.logoRev ?? 0) + 1
+        await writeLogo(logoDir, clean, bytes)
+        doc.launches[clean] = { ...launch, logo: kind, logoRev: rev }
+        await write(doc)
+        return { ok: true, rev }
+      })
     },
     async openLaunch(input) {
       let result: { ok: true; launch: Launch } | LaunchFailure = launchFailure('small')
@@ -636,6 +665,7 @@ async function postgresStore(url: string): Promise<Store> {
       connect_timeout: 15,
     })
   globalSql.larpSql = sql
+  const logoDir = join(dirname(process.env.LEDGER_FILE || '.data/ledger.json'), 'logos')
   await sql`
     create table if not exists larp_positions (id text primary key, body jsonb not null);
     create table if not exists larp_fills (id text primary key, time bigint not null, body jsonb not null);
@@ -921,6 +951,25 @@ async function postgresStore(url: string): Promise<Store> {
     async launchCandles(symbol, interval) {
       const rows = await sql<{ body: Launch }[]>`select body from larp_launches where id = ${symbol}`
       return rows[0] ? toCandles(rows[0].body, interval) : []
+    },
+    async setLaunchLogo(symbol, person, bytes) {
+      const clean = cleanLaunchSymbol(symbol)
+      const kind = sniffLogo(bytes)
+      if (!clean || !kind) return { ok: false as const, error: 'bad_logo' as const, message: LOGO_BAD }
+      return sql.begin(async (tx) => {
+        await tx`select pg_advisory_xact_lock(847211)`
+        const found = await tx<{ body: Launch }[]>`select body from larp_launches where id = ${clean} for update`
+        const launch = found[0]?.body
+        if (!launch) return { ok: false as const, error: 'missing' as const, message: LOGO_MISSING }
+        if (!samePerson(launch.creator.screenName, person.screenName)) {
+          return { ok: false as const, error: 'forbidden' as const, message: LOGO_FORBIDDEN }
+        }
+        const rev = (launch.logoRev ?? 0) + 1
+        await writeLogo(logoDir, clean, bytes)
+        const next = { ...launch, logo: kind, logoRev: rev }
+        await tx`update larp_launches set body = ${tx.json(next as never)} where id = ${clean}`
+        return { ok: true as const, rev }
+      })
     },
     async openLaunch(input) {
       const symbol = cleanLaunchSymbol(input.symbol)
