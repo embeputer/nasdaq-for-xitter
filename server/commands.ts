@@ -47,11 +47,19 @@ export function withdrawKey(postId: string, part: number): string {
 }
 
 export function moneyCents(token: string): number | null {
-  const match = /^\$?(\d{1,7})(?:\.(\d{1,2}))?$/.exec(token.trim())
-  if (!match) return null
-  const cents = Number(match[1]) * 100 + Number((match[2] ?? '').padEnd(2, '0'))
+  const match = /^(\$)?(\d{1,7})(?:\.(\d{1,2}))?(\$)?$/.exec(token.trim())
+  if (!match || (match[1] && match[4])) return null
+  const cents = Number(match[2]) * 100 + Number((match[3] ?? '').padEnd(2, '0'))
   if (!Number.isSafeInteger(cents) || cents < 100) return null
   return cents
+}
+
+/** A skipped post whose amount was written `5$` can be tried once the parser accepts it. */
+export function retrySkippedAmount(text: string, desk: string): boolean {
+  const command = parseCommand(text, desk)
+  if (!command || command.kind === 'sell') return false
+  const token = text.trim().split(/\s+/).at(-1) ?? ''
+  return token.endsWith('$') && !token.startsWith('$')
 }
 
 function escapeReg(value: string): string {

@@ -1,5 +1,5 @@
 import { fileBuy, fileClose, samePerson, type Fill, type Person, type Position } from './book.ts'
-import { REPLIES, type Command } from './commands.ts'
+import { REPLIES, retrySkippedAmount, type Command } from './commands.ts'
 import { planBuy, planSell, planSpend, type Launch } from './launch.ts'
 import type { Venue } from './market.ts'
 import { coverClose, creditOnce, deskKey, takePadding } from './padding.ts'
@@ -59,7 +59,9 @@ const SCORES_READY = 'scores-ready'
 
 export function decideTag(doc: TradeDoc, input: TagInput): TagResult {
   const current = doc.mentions[input.post.id]
-  if (current?.status === 'done' || current?.status === 'skipped') return { action: 'idle' }
+  if (current?.status === 'done' || (current?.status === 'skipped' && !retrySkippedAmount(input.post.text, input.desk))) {
+    return { action: 'idle' }
+  }
   if (current?.status === 'reply') return { action: 'reply', text: current.reply }
   if (current?.status === 'sending') return { action: 'send', cents: current.cents, text: current.reply }
   if (!input.command) {

@@ -42,6 +42,8 @@ function order(postId: string, command: TagInput['command'], listing: TagInput['
 describe('tag commands', () => {
   it('parses a whole post and ignores anything else', () => {
     expect(parseCommand('@nasdaq buy NVDA 20', 'nasdaq')).toEqual({ kind: 'buy', query: 'NVDA', cents: 2000 })
+    expect(parseCommand('@nasdaq buy SPY 5$', 'nasdaq')).toEqual({ kind: 'buy', query: 'SPY', cents: 500 })
+    expect(parseCommand('@nasdaq withdraw 5$', 'nasdaq')).toEqual({ kind: 'withdraw', cents: 500 })
     expect(parseCommand('@NASDAQ BUY nvda $20.5', 'nasdaq')).toEqual({ kind: 'buy', query: 'nvda', cents: 2050 })
     expect(parseCommand('@nasdaq buy bitcoin cash 10', 'nasdaq')).toEqual({ kind: 'buy', query: 'bitcoin cash', cents: 1000 })
     expect(parseCommand('@nasdaq buy xitYAMS 5', 'nasdaq')).toEqual({ kind: 'buy', query: 'xitYAMS', cents: 500 })
@@ -253,6 +255,18 @@ describe('tag ingest', () => {
     expect(second.replies).toEqual([REPLIES.opened])
     expect((await ledger.positions())[0]?.qty).toBe(2)
     expect(await ledger.vaultDesk('z1xus', 'nasdaq')).toBe(8000)
+  })
+
+  it('buys a skipped post whose dollars were written after the number', async () => {
+    const ledger = await book()
+    await ledger.setMeta('mentions-ready:nasdaq', '1')
+    await ledger.seedMentions([
+      { id: 'spy', desk: 'nasdaq', status: 'skipped', reply: '', cents: 0, person, updatedAt: 1 },
+    ])
+    const bought = await run(ledger, [{ id: 'spy', text: '@nasdaq buy NVDA 5$' }])
+    expect(bought.replies).toEqual([REPLIES.opened])
+    expect(await ledger.vaultDesk('z1xus', 'nasdaq')).toBe(9500)
+    expect((await ledger.mention('spy'))?.status).toBe('done')
   })
 
   it('stores a normal mention without replying, and retries a failed reply without buying again', async () => {

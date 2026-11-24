@@ -1,5 +1,5 @@
 import { samePerson, type Person } from './book.ts'
-import { parseCommand, WITHDRAW_NOTE, withdrawKey } from './commands.ts'
+import { parseCommand, retrySkippedAmount, WITHDRAW_NOTE, withdrawKey } from './commands.ts'
 import { getQuotes, searchMarket, type Listing } from './market.ts'
 import {
   ACTIVITY_LIMIT,
@@ -300,7 +300,7 @@ async function settlePost(
   deskWallet: () => Promise<{ balanceCents: number; maxCents?: number } | null>,
 ): Promise<number> {
   const existing = await deps.store.mention(post.id)
-  if (existing?.status === 'done' || existing?.status === 'skipped') return 0
+  if (existing?.status === 'done' || (existing?.status === 'skipped' && !retrySkippedAmount(post.text, desk.screenName))) return 0
   if (existing?.status === 'reply' || existing?.status === 'sending') return deliverMention(deps, desk, existing, reply, deskWallet)
   const screenName = post.author.screenName.trim().replace(/^@/, '')
   if (!screenName || samePerson(screenName, desk.screenName)) {
