@@ -80,8 +80,12 @@ export async function launchFor(symbol: string, name: string, liquidity: number,
   return body.label ?? `xit${symbol.toUpperCase()}`
 }
 
-export async function withdrawFor(): Promise<{ cents: number; screenName: string; short: boolean }> {
-  const res = await fetch('/api/vault/withdraw', { method: 'POST' })
+export async function withdrawFor(amount: number): Promise<{ cents: number; screenName: string; short: boolean }> {
+  const res = await fetch('/api/vault/withdraw', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ amount }),
+  })
   const body = (await res.json().catch(() => ({}))) as { message?: string; cents?: number; screenName?: string; short?: boolean }
   if (!res.ok || typeof body.cents !== 'number' || !body.screenName) throw new Error(body.message || 'Could not withdraw.')
   return { cents: body.cents, screenName: body.screenName, short: body.short === true }

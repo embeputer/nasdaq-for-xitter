@@ -34,6 +34,7 @@ describe('cash withdrawal', () => {
       ledger,
       person,
       desks: [desk],
+      cents: 2000,
       now: 5,
       wallet: async () => ({ balanceCents: 10_000, maxCents: 1500 }),
       pay: async (_desk, _to, cents, note, key) => {
@@ -56,6 +57,7 @@ describe('cash withdrawal', () => {
       ledger,
       person,
       desks: [desk],
+      cents: 2000,
       now: 5,
       wallet: async () => ({ balanceCents: 3000, maxCents: 100_000 }),
       pay: async () => {
@@ -75,6 +77,7 @@ describe('cash withdrawal', () => {
       ledger,
       person,
       desks: [desk],
+      cents: 50,
       now: 5,
       wallet: async () => ({ balanceCents: 10_000, maxCents: 100_000 }),
       pay: async () => undefined,
@@ -86,6 +89,7 @@ describe('cash withdrawal', () => {
       ledger,
       person,
       desks: [desk],
+      cents: 2000,
       now: 6,
       wallet: async () => ({ balanceCents: 10_000, maxCents: 100_000 }),
       pay: async () => {
@@ -96,5 +100,39 @@ describe('cash withdrawal', () => {
     })
     expect(blocked.ok).toBe(false)
     expect(await ledger.vaultDesk('z1xus', 'nasdaq')).toBe(2050)
+  })
+
+  it('sends only the chosen amount', async () => {
+    const ledger = memoryStore()
+    await ledger.creditVault(row('me', person, 2000), person)
+    const pays: number[] = []
+    const result = await withdrawCash({
+      ledger,
+      person,
+      desks: [desk],
+      cents: 500,
+      now: 5,
+      wallet: async () => ({ balanceCents: 10_000, maxCents: 100_000 }),
+      pay: async (_desk, _to, cents) => {
+        pays.push(cents)
+      },
+    })
+    expect(result).toEqual({ ok: true, cents: 500, screenName: 'z1xus', short: true })
+    expect(pays).toEqual([500])
+    expect(await ledger.vaultDesk('z1xus', 'nasdaq')).toBe(1500)
+    const over = await withdrawCash({
+      ledger,
+      person,
+      desks: [desk],
+      cents: 2000,
+      now: 6,
+      wallet: async () => ({ balanceCents: 10_000, maxCents: 100_000 }),
+      pay: async () => {
+        throw new Error('should not send')
+      },
+    })
+    expect(over.ok).toBe(false)
+    if (!over.ok) expect(over.message).toMatch(/don't have that much/)
+    expect(await ledger.vaultDesk('z1xus', 'nasdaq')).toBe(1500)
   })
 })

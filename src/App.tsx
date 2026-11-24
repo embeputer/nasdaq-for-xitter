@@ -7,6 +7,7 @@ import { Discover } from './components/Discover'
 import { Leaderboard } from './components/Leaderboard'
 import { SessionRibbon } from './components/SessionRibbon'
 import { LaunchForm } from './components/LaunchForm'
+import { WithdrawForm } from './components/WithdrawForm'
 import { Portfolio } from './components/Portfolio'
 import type { Candle, Position, Quote } from './types'
 
@@ -38,7 +39,7 @@ export default function App() {
   const [chartError, setChartError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [launchOpen, setLaunchOpen] = useState(false)
-  const [withdrawing, setWithdrawing] = useState(false)
+  const [withdrawOpen, setWithdrawOpen] = useState(false)
   const [now, setNow] = useState(() => new Date())
 
   useEffect(() => {
@@ -160,23 +161,18 @@ export default function App() {
     setBook(await fetchBook())
   }
 
-  async function withdrawCash() {
-    if (withdrawing || !viewer) return
-    const shown = book.nqfxCents >= 100 ? formatUsd(book.nqfxCents / 100) : 'your Cash'
-    if (!window.confirm(`Send ${shown} from Cash to @${viewer.screenName}?`)) return
-    setWithdrawing(true)
+  async function withdrawCash(amount: number) {
+    const result = await withdrawFor(amount)
+    setWithdrawOpen(false)
+    setNotice(
+      result.short
+        ? `Sent ${formatUsd(result.cents / 100)} to @${result.screenName}. The rest is still in Cash.`
+        : `Sent ${formatUsd(result.cents / 100)} to @${result.screenName}.`,
+    )
     try {
-      const result = await withdrawFor()
-      setNotice(
-        result.short
-          ? `Sent ${formatUsd(result.cents / 100)} to @${result.screenName}. The rest is still in Cash.`
-          : `Sent ${formatUsd(result.cents / 100)} to @${result.screenName}.`,
-      )
       await refresh()
-    } catch (error: unknown) {
-      setNotice(error instanceof Error ? error.message : 'Could not withdraw.')
-    } finally {
-      setWithdrawing(false)
+    } catch {
+      // the book poll retries
     }
   }
 
@@ -198,7 +194,7 @@ export default function App() {
         </nav>
         <div className="snap">
           {viewer ? (
-            <button type="button" className="launch-open" disabled={withdrawing} onClick={() => void withdrawCash()}>
+            <button type="button" className="launch-open" onClick={() => setWithdrawOpen(true)}>
               Withdraw
             </button>
           ) : null}
@@ -215,6 +211,7 @@ export default function App() {
                 void logout().then(() => {
                   setViewer(null)
                   setLaunchOpen(false)
+                  setWithdrawOpen(false)
                 })
               }}
             >
@@ -243,6 +240,9 @@ export default function App() {
           }}
         />
       ) : null}
+      {viewer && withdrawOpen ? (
+        <WithdrawForm nqfxCents={book.nqfxCents} onClose={() => setWithdrawOpen(false)} onWithdraw={withdrawCash} />
+      ) : null}
       {!book.durable ? <p className="hint durable">This deploy has no database, so positions will not stick. Set POSTGRES_URL.</p> : null}
       {notice ? <p className="hint durable">{notice}</p> : null}
       {view === 'discover' ? (
@@ -266,8 +266,7 @@ export default function App() {
           quotes={quotes}
           desks={book.desks}
           nqfxCents={book.nqfxCents}
-          withdrawing={withdrawing}
-          onWithdraw={() => void withdrawCash()}
+          onWithdraw={() => setWithdrawOpen(true)}
           onClose={async (position, cash) => {
             try {
               const result = await closeFor(position.id, cash)

@@ -20,7 +20,8 @@ describe('withdraw button', () => {
         onOpened: () => undefined,
       }),
     )
-    expect(signedIn).toContain('Withdraw $25.00')
+    expect(signedIn).toContain('>Withdraw<')
+    expect(signedIn).toContain('composer-toggle')
     const loggedOut = renderToStaticMarkup(
       createElement(Portfolio, {
         viewer: null,

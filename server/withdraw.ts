@@ -5,7 +5,8 @@ import type { Store } from './store.ts'
 import { cashMarker, type CashTransfer } from './tag.ts'
 import type { Person } from './book.ts'
 
-const POOR = 'You need at least $1 in Cash to withdraw.'
+const POOR = 'Withdraw at least $1.'
+const OVER = "You don't have that much Cash."
 const SHORT = "The NQFX fund can't cover that withdrawal. Your Cash is still there."
 const BAD = 'A withdrawal is already on file, but the record is unreadable.'
 const WALLET = 'Could not read the desk wallet. Nothing was withdrawn.'
@@ -21,6 +22,7 @@ export async function withdrawCash(input: {
   desks: Desk[]
   wallet: (desk: Desk) => Promise<{ balanceCents: number; maxCents: number }>
   pay: (desk: Desk, to: string, cents: number, note: string, key: string) => Promise<void>
+  cents: number
   now: number
 }): Promise<WithdrawResult> {
   const name = input.person.screenName.trim().replace(/^@/, '')
@@ -47,9 +49,10 @@ export async function withdrawCash(input: {
       }
     }
   }
-  const claim = await input.ledger.placeCash(input.person, rooms, input.now)
+  const claim = await input.ledger.placeCash(input.person, rooms, input.cents, input.now)
   if (claim.action !== 'send') {
     if (claim.action === 'poor') return { ok: false, status: 409, error: 'poor', message: POOR }
+    if (claim.action === 'over') return { ok: false, status: 409, error: 'over', message: OVER }
     if (claim.action === 'short') return { ok: false, status: 409, error: 'short', message: SHORT }
     return { ok: false, status: 409, error: 'bad_marker', message: BAD }
   }

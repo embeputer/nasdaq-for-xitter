@@ -127,7 +127,7 @@ export type Store = {
   ackSend(id: string): Promise<void>
   abortWithdraw(id: string): Promise<string>
   vaultDesk(screenName: string, desk: string): Promise<number>
-  placeCash(person: Person, rooms: { desk: string; room: number; maxCents: number }[], now: number): Promise<CashHold>
+  placeCash(person: Person, rooms: { desk: string; room: number; maxCents: number }[], cents: number, now: number): Promise<CashHold>
   noteCash(screenName: string, id: string): Promise<void>
   releaseCash(screenName: string): Promise<void>
   leaders(): Promise<{ person: Person; realizedCents: number }[]>
@@ -566,10 +566,10 @@ function storeFrom(
     async vaultDesk(screenName, desk) {
       return deskVault(read(), screenName, desk)
     },
-    async placeCash(person, rooms, now) {
+    async placeCash(person, rooms, cents, now) {
       let result: CashHold = { action: 'poor' }
       await edit((doc) => {
-        result = placeCash(doc, person, rooms, now)
+        result = placeCash(doc, person, rooms, cents, now)
       })
       return result
     },
@@ -1237,10 +1237,10 @@ async function postgresStore(url: string): Promise<Store> {
       })
       return text
     },
-    async placeCash(person, rooms, now) {
+    async placeCash(person, rooms, cents, now) {
       let result: CashHold = { action: 'poor' }
       await editTrade((doc) => {
-        result = placeCash(doc, person, rooms, now)
+        result = placeCash(doc, person, rooms, cents, now)
       })
       return result
     },

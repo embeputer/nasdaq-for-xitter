@@ -348,14 +348,21 @@ async function withdrawVault(req: IncomingMessage, res: ServerResponse) {
     send(res, 401, { error: 'unauthorized', message: 'Log in to withdraw Cash.' })
     return
   }
+  const body = await readJson(req)
+  const cents = moneyCents(body.amount)
+  if (!Number.isSafeInteger(cents) || cents < 100) {
+    send(res, 409, { error: 'poor', message: 'Withdraw at least $1.' })
+    return
+  }
   const ledger = await openLedger()
   await withCloseLock(`cash:${viewer.screenName.toLowerCase()}`, async () => {
     const result = await withdrawCash({
       ledger,
       person: viewer,
       desks: await loadDesks(),
+      cents,
       wallet: (desk) => readWallet(desk.readToken),
-      pay: (desk, to, cents, note, key) => sendPayout(desk.writeToken, to, cents, note, key),
+      pay: (desk, to, part, note, key) => sendPayout(desk.writeToken, to, part, note, key),
       now: Date.now(),
     })
     if (!result.ok) {

@@ -85,7 +85,7 @@ export function undoWithdraw(doc: TradeDoc, id: string, now: number): string {
 
 export type CashTransfer = { desk: string; cents: number; id: string; parts: number[]; sent: number }
 
-export type CashHold = { action: 'send'; transfers: CashTransfer[] } | { action: 'poor' | 'short' | 'bad' }
+export type CashHold = { action: 'send'; transfers: CashTransfer[] } | { action: 'poor' | 'over' | 'short' | 'bad' }
 
 export function cashMarker(screenName: string): string {
   return `cash-out:${screenName.trim().replace(/^@/, '').toLowerCase()}`
@@ -95,6 +95,7 @@ export function placeCash(
   doc: TradeDoc,
   person: Person,
   rooms: { desk: string; room: number; maxCents: number }[],
+  cents: number,
   now: number,
 ): CashHold {
   const name = person.screenName.trim().replace(/^@/, '').toLowerCase()
@@ -102,18 +103,29 @@ export function placeCash(
   const saved = readCash(doc.meta[key])
   if (saved === 'bad') return { action: 'bad' }
   if (saved) return { action: 'send', transfers: saved }
+  if (!Number.isSafeInteger(cents) || cents < 100) return { action: 'poor' }
   const total = Object.values(doc.vaults).reduce(
     (sum, vault) => (vault.person.screenName.toLowerCase() === name ? sum + vault.cents : sum),
     0,
   )
-  if (total < 100) return { action: 'poor' }
+  if (total < cents) return { action: 'over' }
+  const piles = rooms
+    .map((room) => ({
+      desk: room.desk,
+      available: Math.min(deskVault(doc, name, room.desk), Math.max(0, room.room)),
+      maxCents: room.maxCents,
+    }))
+    .filter((pile) => pile.available >= 1)
+    .sort((a, b) => b.available - a.available || a.desk.localeCompare(b.desk))
+  if (piles.reduce((sum, pile) => sum + pile.available, 0) < cents) return { action: 'short' }
   const plans: { desk: string; cents: number; parts: number[] }[] = []
-  for (const room of rooms) {
-    const cents = deskVault(doc, name, room.desk)
-    if (cents < 1 || room.room < cents) continue
-    plans.push({ desk: room.desk, cents, parts: chunkCents(cents, room.maxCents) })
+  let left = cents
+  for (const pile of piles) {
+    if (left < 1) break
+    const take = Math.min(left, pile.available)
+    plans.push({ desk: pile.desk, cents: take, parts: chunkCents(take, pile.maxCents) })
+    left -= take
   }
-  if (plans.reduce((sum, plan) => sum + plan.cents, 0) < 100) return { action: 'short' }
   const transfers: CashTransfer[] = []
   const taken: { desk: string; cents: number }[] = []
   for (const [index, plan] of plans.entries()) {

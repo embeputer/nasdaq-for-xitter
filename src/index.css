@@ -129,19 +129,6 @@ img { display: block; }
 }
 .launch-open:hover { background: rgba(231, 233, 234, 0.1); }
 .launch-open:disabled { opacity: 0.5; }
-.withdraw {
-  display: block;
-  width: calc(100% - 32px);
-  margin: 16px 16px 0;
-  height: 44px;
-  border: 0;
-  border-radius: 999px;
-  background: var(--button);
-  color: var(--button-ink);
-  font-size: 15px;
-  font-weight: 700;
-}
-.withdraw:disabled { opacity: 0.5; }
 .snap p { margin: 0; display: grid; justify-items: end; }
 .snap span { color: var(--dim); font-size: 13px; }
 .snap strong { font-weight: 700; font-size: 15px; }
@@ -667,6 +654,7 @@ button:focus-visible {
 .login-copy { margin: 0 16px 12px; }
 .durable { margin: 0; padding: 8px 16px; border-bottom: 1px solid var(--line); }
 .composer-wrap { padding: 12px 16px; border-bottom: 1px solid var(--line); }
+.withdraw-row { padding: 12px 16px 0; }
 .composer-toggle { width: auto; margin: 0; padding: 0 16px; }
 .composer { margin-top: 12px; }
 .composer-grid {
