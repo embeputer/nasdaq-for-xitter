@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { stockMark } from './market.ts'
+import { candleCacheMs, stockMark } from './market.ts'
 
 const session = { regular: { start: 1_000, end: 2_000 } }
 const meta = {
@@ -11,6 +11,14 @@ const meta = {
   regularMarketChangePercent: 3.1,
   currentTradingPeriod: session,
 }
+
+describe('candle cache', () => {
+  it('keeps a crypto minute fresh and leaves stock charts slower', () => {
+    expect(candleCacheMs('crypto', '1m')).toBe(2_000)
+    expect(candleCacheMs('stock', '1m')).toBe(5_000)
+    expect(candleCacheMs('crypto', '1h')).toBe(15_000)
+  })
+})
 
 describe('stock mark', () => {
   it('uses the extended price before the open and after the close', () => {

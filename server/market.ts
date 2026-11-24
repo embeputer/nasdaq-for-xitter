@@ -372,6 +372,12 @@ const RANGES: Record<Interval, { interval: string; range: string; binance: strin
   '1d': { interval: '1d', range: '1y', binance: '1d' },
 }
 
+export function candleCacheMs(venue: string, interval: Interval): number {
+  if (venue === 'crypto' && interval === '1m') return 2_000
+  if (interval === '1m') return 5_000
+  return 15_000
+}
+
 export function isInterval(value: string): value is Interval {
   return value === '1m' || value === '5m' || value === '15m' || value === '1h' || value === '1d'
 }
@@ -379,7 +385,7 @@ export function isInterval(value: string): value is Interval {
 export async function getCandles(id: string, interval: Interval): Promise<Candle[]> {
   const parsed = parseId(id)
   if (!parsed) return []
-  return cached(`c:${id}:${interval}`, interval === '1m' ? 5000 : 15000, async () => {
+  return cached(`c:${id}:${interval}`, candleCacheMs(parsed.venue, interval), async () => {
     if (parsed.venue === 'stock') return stockCandles(parsed.symbol, interval)
     if (parsed.venue === 'perpetual') return hyperliquidCandles(parsed.symbol, interval)
     if (isContractAddress(parsed.symbol)) return []

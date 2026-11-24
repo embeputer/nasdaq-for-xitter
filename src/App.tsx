@@ -3,6 +3,7 @@ import { closeFor, fetchBook, fetchCandles, fetchQuotes, fetchSession, logout, w
 import { marketValue } from './lib/account'
 import { formatUsd } from './lib/format'
 import { equitySession, sessionFromMarketState, shownSession, type EquitySession } from './lib/session'
+import { CRYPTO_POLL_MS, STOCK_POLL_MS, candlePollMs, quoteGroups } from './lib/poll'
 import { Discover } from './components/Discover'
 import { Leaderboard } from './components/Leaderboard'
 import { SessionRibbon } from './components/SessionRibbon'
@@ -21,6 +22,31 @@ function liveSession(quotes: Record<string, Quote>, selected: Position | null, n
     if (parsed) return parsed
   }
   return equitySession(now)
+}
+
+function pollQuotes(ids: string[], ms: number, setQuotes: (update: (current: Record<string, Quote>) => Record<string, Quote>) => void) {
+  if (!ids.length) return
+  let stop = false
+  const load = () => {
+    void fetchQuotes(ids)
+      .then((rows) => {
+        if (stop) return
+        setQuotes((current) => {
+          const next = { ...current }
+          for (const row of rows) next[row.id] = row
+          return next
+        })
+      })
+      .catch(() => {
+        // the next tick tries again
+      })
+  }
+  load()
+  const timer = window.setInterval(load, ms)
+  return () => {
+    stop = true
+    window.clearInterval(timer)
+  }
 }
 
 function viewFromLocation(): 'discover' | 'pnl' | 'portfolio' {
@@ -111,26 +137,15 @@ export default function App() {
     return [...new Set(ids)].slice(0, 40)
   }, [book.positions])
 
+  const groupedQuotes = useMemo(() => quoteGroups(quoteIds), [quoteIds])
+
   useEffect(() => {
-    if (!quoteIds.length) return
-    let stop = false
-    const load = () => {
-      void fetchQuotes(quoteIds).then((rows) => {
-        if (stop) return
-        setQuotes((current) => {
-          const next = { ...current }
-          for (const row of rows) next[row.id] = row
-          return next
-        })
-      })
-    }
-    load()
-    const timer = window.setInterval(load, view === 'portfolio' ? 4000 : 2000)
-    return () => {
-      stop = true
-      window.clearInterval(timer)
-    }
-  }, [quoteIds, view])
+    return pollQuotes(groupedQuotes.crypto, CRYPTO_POLL_MS, setQuotes)
+  }, [groupedQuotes.crypto])
+
+  useEffect(() => {
+    return pollQuotes(groupedQuotes.other, STOCK_POLL_MS, setQuotes)
+  }, [groupedQuotes.other])
 
   useEffect(() => {
     if (!selected) return
@@ -148,7 +163,7 @@ export default function App() {
         })
     }
     load()
-    const timer = window.setInterval(load, 8000)
+    const timer = window.setInterval(load, candlePollMs(selected.venue))
     return () => {
       stop = true
       window.clearInterval(timer)
