@@ -430,7 +430,13 @@ button:focus-visible {
   object-fit: cover;
   background: var(--fill);
 }
-.avatar-fallback { display: inline-block; }
+.avatar-fallback {
+  display: inline-grid;
+  place-items: center;
+  color: var(--ink);
+  font-size: 16px;
+  font-weight: 800;
+}
 
 .held { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--line); }
 .held h3 { margin: 2px 0 10px; font-size: 17px; font-weight: 800; }

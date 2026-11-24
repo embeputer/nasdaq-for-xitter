@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react'
 import { VENUE_LABEL } from '../data/universe'
+import { AssetMark } from './AssetMark'
 import { formatClock, formatPct, formatPrice, formatQty, formatUsd, pnlClass } from '../lib/format'
 import { marketValue, openPnl } from '../lib/account'
 import type { Viewer } from '../lib/api'
@@ -95,11 +96,10 @@ export function Portfolio({
                   <span>{position.name}</span>
                 </h3>
                 <p className="who">
-                  {position.person.avatarUrl ? <img src={position.person.avatarUrl} alt="" /> : <span className="avatar-fallback" />}
+                  <AssetMark venue={position.venue} symbol={position.symbol} label={position.label} />
                   <span>
                     @{position.person.screenName}
                     <span className="class-tag">{VENUE_LABEL[position.venue]}</span>
-                    {position.venue === 'launch' ? <span className="class-tag">Trades all day</span> : null}
                   </span>
                 </p>
                 <p className="meta">
