@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { closeFor, fetchBook, fetchCandles, fetchQuotes, fetchSession, logout, type Book, type Viewer } from './lib/api'
 import { marketValue } from './lib/account'
 import { formatUsd } from './lib/format'
-import { equitySession, SESSION_LABEL, sessionFromMarketState, type EquitySession } from './lib/session'
+import { equitySession, sessionFromMarketState, shownSession, type EquitySession } from './lib/session'
 import { Discover } from './components/Discover'
 import { LaunchForm } from './components/LaunchForm'
 import { Portfolio } from './components/Portfolio'
@@ -145,6 +145,7 @@ export default function App() {
   }, [selected?.id, selected?.symbol, selected?.venue, interval])
 
   const session = useMemo(() => liveSession(quotes, selected, now), [quotes, selected, now])
+  const ribbon = shownSession(selected?.venue, session)
 
   const bookValue = book.positions.reduce(
     (sum, position) => sum + marketValue(position, quotes[`${position.venue}:${position.symbol}`]?.price),
@@ -198,8 +199,8 @@ export default function App() {
           </p>
         </div>
       </header>
-      <p className={`session session-${session}`} title="US stocks, New York time">
-        {SESSION_LABEL[session]}
+      <p className={`session session-${ribbon.id}`} title={ribbon.title}>
+        {ribbon.label}
       </p>
       </div>
       {viewer && launchOpen ? (

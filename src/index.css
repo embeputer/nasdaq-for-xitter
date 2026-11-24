@@ -267,6 +267,7 @@ button:focus-visible {
 .session-open { background: #1faf4a; color: #031408; }
 .session-post { background: #7a45b0; color: #f8f3ff; }
 .session-closed { background: #8b939a; color: #121417; }
+.session-all { background: #e7e9ea; color: #0f1419; }
 .last { text-align: right; font-variant-numeric: tabular-nums; }
 .last strong { display: block; font-size: 31px; font-weight: 800; letter-spacing: -0.03em; }
 .last em { font-style: normal; color: var(--dim); font-size: 15px; }

@@ -99,6 +99,7 @@ export function Portfolio({
                   <span>
                     @{position.person.screenName}
                     <span className="class-tag">{VENUE_LABEL[position.venue]}</span>
+                    {position.venue === 'launch' ? <span className="class-tag">Trades all day</span> : null}
                   </span>
                 </p>
                 <p className="meta">

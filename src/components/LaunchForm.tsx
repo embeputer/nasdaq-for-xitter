@@ -104,7 +104,7 @@ export function LaunchForm({
               placeholder="YAMS"
               onChange={(event) => setSymbolText(event.target.value)}
             />
-            <p className="hint">Buyers write {label} in the note.</p>
+            <p className="hint">Buyers write {label} in the note. It trades all day.</p>
           </>
         ) : null}
         {step === 'name' ? (

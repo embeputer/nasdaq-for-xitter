@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { equitySession, sessionFromMarketState } from './session'
+import { equitySession, sessionFromMarketState, shownSession } from './session'
 
 function ny(year: number, month: number, day: number, hour: number, minute: number): Date {
   const utc = new Date(Date.UTC(year, month - 1, day, hour, minute))
@@ -104,5 +104,15 @@ describe('equity session', () => {
     expect(sessionFromMarketState('CLOSED')).toBe('closed')
     expect(sessionFromMarketState(null)).toBeNull()
     expect(sessionFromMarketState('HALTED')).toBeNull()
+  })
+
+  it('keeps a user stock open when the stock market is closed', () => {
+    expect(shownSession('launch', 'closed')).toEqual({
+      id: 'all',
+      label: 'Trades all day',
+      title: 'User stocks trade all day',
+    })
+    expect(shownSession('stock', 'closed').label).toBe('Market closed')
+    expect(shownSession('crypto', 'pre').label).toBe('Pre-market')
   })
 })

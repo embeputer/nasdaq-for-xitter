@@ -7,6 +7,14 @@ export const SESSION_LABEL: Record<EquitySession, string> = {
   closed: 'Market closed',
 }
 
+export function shownSession(
+  venue: string | null | undefined,
+  clock: EquitySession,
+): { id: EquitySession | 'all'; label: string; title: string } {
+  if (venue === 'launch') return { id: 'all', label: 'Trades all day', title: 'User stocks trade all day' }
+  return { id: clock, label: SESSION_LABEL[clock], title: 'US stocks, New York time' }
+}
+
 const PRE = 4 * 60
 const OPEN = 9 * 60 + 30
 const CLOSE = 16 * 60
