@@ -2,9 +2,22 @@ import { useEffect, useMemo, useState } from 'react'
 import { closeFor, fetchBook, fetchCandles, fetchQuotes, fetchSession, logout, type Book, type Viewer } from './lib/api'
 import { marketValue } from './lib/account'
 import { formatUsd } from './lib/format'
+import { equitySession, SESSION_LABEL, sessionFromMarketState, type EquitySession } from './lib/session'
 import { Discover } from './components/Discover'
 import { Portfolio } from './components/Portfolio'
 import type { Candle, Interval, Position, Quote } from './types'
+
+function liveSession(quotes: Record<string, Quote>, selected: Position | null, now: Date): EquitySession {
+  const selectedQuote = selected ? quotes[`${selected.venue}:${selected.symbol}`] : undefined
+  const fromSelected = selectedQuote?.venue === 'stock' ? sessionFromMarketState(selectedQuote.marketState) : null
+  if (fromSelected) return fromSelected
+  for (const quote of Object.values(quotes)) {
+    if (quote.venue !== 'stock') continue
+    const parsed = sessionFromMarketState(quote.marketState)
+    if (parsed) return parsed
+  }
+  return equitySession(now)
+}
 
 function viewFromLocation(): 'discover' | 'portfolio' {
   return window.location.hash === '#portfolio' ? 'portfolio' : 'discover'
@@ -20,6 +33,12 @@ export default function App() {
   const [candles, setCandles] = useState<Candle[]>([])
   const [chartError, setChartError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  const [now, setNow] = useState(() => new Date())
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(new Date()), 15_000)
+    return () => window.clearInterval(timer)
+  }, [])
 
   useEffect(() => {
     const hash = view === 'portfolio' ? '#portfolio' : '#discover'
@@ -123,6 +142,8 @@ export default function App() {
     }
   }, [selected?.id, selected?.symbol, selected?.venue, interval])
 
+  const session = useMemo(() => liveSession(quotes, selected, now), [quotes, selected, now])
+
   const bookValue = book.positions.reduce(
     (sum, position) => sum + marketValue(position, quotes[`${position.venue}:${position.symbol}`]?.price),
     0,
@@ -144,6 +165,10 @@ export default function App() {
             Portfolio
           </button>
         </nav>
+        <p className={`session session-${session}`} title="US stocks, New York time">
+          <i aria-hidden="true" />
+          {SESSION_LABEL[session]}
+        </p>
         <div className="snap">
           {viewer ? (
             <button

@@ -79,13 +79,7 @@ export function Portfolio({
         <h2>{viewer.admin ? 'Book' : 'Positions'}</h2>
         {mine.length === 0 ? (
           <p className="hint pad">No open positions. Send Equicoins to {names} with the ticker in the note.</p>
-        ) : (
-          <p className="hint pad">
-            {viewer.admin
-              ? 'Close pays the current value back. Without cash closes the book and sends nothing.'
-              : "Close pays the current value back. If that send fails, the position stays open."}
-          </p>
-        )}
+        ) : null}
         {mine.map((position) => {
           const price = quotes[`${position.venue}:${position.symbol}`]?.price
           const gain = openPnl(position, price)
@@ -113,14 +107,16 @@ export function Portfolio({
                 <em className={pnlClass(gain)}>
                   {formatUsd(gain, true)} {formatPct(pct)}
                 </em>
-                <button type="button" className="close" disabled={busy} onClick={() => void close(position, true)}>
-                  Close
-                </button>
-                {viewer.admin ? (
-                  <button type="button" className="text-btn" disabled={busy} onClick={() => void close(position, false)}>
-                    Without cash
+                <div className="close-row">
+                  <button type="button" className="close" disabled={busy} onClick={() => void close(position, true)}>
+                    Close
                   </button>
-                ) : null}
+                  {viewer.admin ? (
+                    <button type="button" className="close" disabled={busy} onClick={() => void close(position, false)}>
+                      Without cash
+                    </button>
+                  ) : null}
+                </div>
               </div>
             </article>
           )

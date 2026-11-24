@@ -85,7 +85,10 @@ export function Discover({
             <header className="quote-head">
               <div>
                 <p className="label-name">{instrument.name}</p>
-                <h2>{instrument.label}</h2>
+                <h2>
+                  {instrument.label}
+                  {instrument.venue === 'stock' ? null : <span className="all-day">Trades all day</span>}
+                </h2>
               </div>
               <div className="last">
                 <strong>{quote ? formatPrice(quote.price, instrument.venue) : '—'}</strong>

@@ -229,6 +229,34 @@ button:focus-visible {
   letter-spacing: -0.03em;
   line-height: 1.15;
 }
+.quote-head h2 .all-day {
+  margin-left: 8px;
+  color: var(--dim);
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+
+.session {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 0 8px;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.session i {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--ink);
+}
+.session-open i { background: var(--ink); box-shadow: none; }
+.session-closed { color: var(--dim); }
+.session-closed i { box-shadow: inset 0 0 0 1.5px var(--dim); }
 .last { text-align: right; font-variant-numeric: tabular-nums; }
 .last strong { display: block; font-size: 31px; font-weight: 800; letter-spacing: -0.03em; }
 .last em { font-style: normal; color: var(--dim); font-size: 15px; }
@@ -415,9 +443,10 @@ button:focus-visible {
 .holding-end { text-align: right; display: grid; justify-items: end; gap: 4px; align-content: start; }
 .holding-end strong { font-size: 15px; font-variant-numeric: tabular-nums; font-weight: 700; }
 .holding-end em { font-style: normal; font-variant-numeric: tabular-nums; font-size: 13px; }
-.holding-end .close { height: 32px; padding: 0 16px; }
-.holding-end .text-btn { height: 32px; font-size: 13px; }
-.holding-end .close:disabled, .holding-end .text-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.holding-end .close-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+.holding-end .close { height: 36px; padding: 0 22px; min-width: 112px; }
+.holding-end .close-row .close:first-child { min-width: 148px; }
+.holding-end .close:disabled { opacity: 0.5; cursor: not-allowed; }
 .fills ul { list-style: none; padding: 0; margin: 0; }
 .fills li {
   display: flex;
@@ -497,7 +526,10 @@ button:focus-visible {
   .stage { min-height: 520px; }
   .chart { position: relative; height: 360px; }
   .topbar { gap: 8px; height: auto; padding: 8px 12px; flex-wrap: wrap; }
-  .snap { margin-left: 0; width: 100%; justify-content: space-between; }
+  .topbar nav { height: auto; }
+  .topbar nav button { height: auto; padding-top: 12px; padding-bottom: 12px; }
+  .session { margin: 0; height: 32px; }
+  .snap { margin-left: 0; width: auto; flex: 1; justify-content: flex-end; gap: 12px; }
   .sheet { padding-bottom: 64px; }
   .stats { grid-template-columns: 1fr 1fr; }
   .composer-grid { grid-template-columns: 1fr; }
