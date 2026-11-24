@@ -80,12 +80,12 @@ export function Portfolio({
         <Stat label="Account" value={`@${viewer.screenName}`} />
         <Stat label="Role" value={viewer.admin ? 'Admin' : 'Member'} />
       </div>
-      <div className="withdraw-row">
+      <div className="pill-row">
         <button type="button" className="invest composer-toggle" disabled={busy} onClick={onWithdraw}>
           Withdraw
         </button>
+        {viewer.admin ? <AdminComposer onOpened={onOpened} /> : null}
       </div>
-      {viewer.admin ? <AdminComposer onOpened={onOpened} /> : null}
       <section className="holdings">
         <h2>{viewer.admin ? 'Book' : 'Positions'}</h2>
         {mine.length === 0 ? (

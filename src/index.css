@@ -653,9 +653,16 @@ button:focus-visible {
 .login-link { height: 40px; padding: 0 18px; margin: 8px 16px 0; }
 .login-copy { margin: 0 16px 12px; }
 .durable { margin: 0; padding: 8px 16px; border-bottom: 1px solid var(--line); }
-.composer-wrap { padding: 12px 16px; border-bottom: 1px solid var(--line); }
-.withdraw-row { padding: 12px 16px 0; }
+.pill-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
+}
 .composer-toggle { width: auto; margin: 0; padding: 0 16px; }
+.pill-row .composer { flex: 1 0 100%; }
 .composer { margin-top: 12px; }
 .composer-grid {
   display: grid;

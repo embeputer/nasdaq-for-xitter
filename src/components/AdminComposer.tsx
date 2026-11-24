@@ -36,7 +36,7 @@ export function AdminComposer({ onOpened }: { onOpened: () => void }) {
   const ready = person && amount >= 1 && !busy
 
   return (
-    <section className="composer-wrap">
+    <>
       <button type="button" className="invest composer-toggle" onClick={() => setOpen((value) => !value)}>
         {open ? 'Close' : 'Open a position'}
       </button>
@@ -94,6 +94,6 @@ export function AdminComposer({ onOpened }: { onOpened: () => void }) {
           </div>
         </div>
       ) : null}
-    </section>
+    </>
   )
 }
