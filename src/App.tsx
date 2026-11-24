@@ -3,6 +3,7 @@ import { closeFor, fetchBook, fetchCandles, fetchQuotes, fetchSession, logout, w
 import { marketValue } from './lib/account'
 import { formatUsd } from './lib/format'
 import { equitySession, sessionFromMarketState, shownSession, type EquitySession } from './lib/session'
+import { noisePosition, NOISE_QUOTE } from './lib/noise'
 import { CRYPTO_POLL_MS, STOCK_POLL_MS, candlePollMs, quoteGroups } from './lib/poll'
 import { Discover } from './components/Discover'
 import { Leaderboard } from './components/Leaderboard'
@@ -126,26 +127,30 @@ export default function App() {
     }
   }, [])
 
-  const selected = book.positions.find((position) => position.id === selectedId) ?? book.positions[0] ?? null
+  const house = noisePosition()
+  const selected =
+    selectedId === house.id
+      ? house
+      : (book.positions.find((position) => position.id === selectedId) ?? book.positions[0] ?? house)
   const nextCandleKey = selected ? `${selected.venue}:${selected.symbol}` : ''
   if (candleKey !== nextCandleKey) {
     setCandleKey(nextCandleKey)
     setCandles([])
   }
   const quoteIds = useMemo(() => {
-    const ids = book.positions.map((position) => `${position.venue}:${position.symbol}`)
+    const ids = [NOISE_QUOTE, ...book.positions.map((position) => `${position.venue}:${position.symbol}`)]
     return [...new Set(ids)].slice(0, 40)
   }, [book.positions])
 
   const groupedQuotes = useMemo(() => quoteGroups(quoteIds), [quoteIds])
 
   useEffect(() => {
-    return pollQuotes(groupedQuotes.crypto, CRYPTO_POLL_MS, setQuotes)
-  }, [groupedQuotes.crypto])
+    return pollQuotes(groupedQuotes.fast, CRYPTO_POLL_MS, setQuotes)
+  }, [groupedQuotes.fast])
 
   useEffect(() => {
-    return pollQuotes(groupedQuotes.other, STOCK_POLL_MS, setQuotes)
-  }, [groupedQuotes.other])
+    return pollQuotes(groupedQuotes.slow, STOCK_POLL_MS, setQuotes)
+  }, [groupedQuotes.slow])
 
   useEffect(() => {
     if (!selected) return
@@ -163,7 +168,7 @@ export default function App() {
         })
     }
     load()
-    const timer = window.setInterval(load, candlePollMs(selected.venue))
+    const timer = window.setInterval(load, candlePollMs(selected.venue, selected.symbol))
     return () => {
       stop = true
       window.clearInterval(timer)
@@ -268,6 +273,7 @@ export default function App() {
       {notice ? <p className="hint durable">{notice}</p> : null}
       {view === 'discover' ? (
         <Discover
+          house={house}
           positions={book.positions}
           quotes={quotes}
           viewer={viewer}

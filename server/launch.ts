@@ -132,7 +132,7 @@ export function planSell(launch: Launch, qty: number, cents: number, now: number
   const taken = Number.isSafeInteger(cents) && cents > 0 ? Math.min(cents, launch.cashCents) : 0
   const supply = Math.max(0, launch.supply - (qty > 0 && Number.isFinite(qty) ? qty : 0))
   const dust = supply < 1e-8
-  const price = dust ? 1 : launch.price
+  const price = dust && launch.creator.id !== NOISE_ID ? 1 : launch.price
   return {
     ...launch,
     cashCents: launch.cashCents - taken,
@@ -271,7 +271,44 @@ export function launchCandles(launch: Launch, interval: Interval): Candle[] {
   return [...buckets.values()].sort((a, b) => a.time - b.time)
 }
 
-function pushPrint(prints: Launch['prints'], time: number, price: number): Launch['prints'] {
+function pushPrint(prints: Launch['prints'], time: number, price: number, limit = 400): Launch['prints'] {
   const next = [...prints, { time, price }]
-  return next.length > 400 ? next.slice(next.length - 400) : next
+  return next.length > limit ? next.slice(next.length - limit) : next
+}
+
+export const NOISE_SYMBOL = 'NOISE'
+export const NOISE_ID = 'noise'
+const NOISE_FLOOR = 0.05
+
+export function noiseSeed(now: number): Launch {
+  return seedLaunch({ id: NOISE_ID, screenName: '', name: 'Noise', avatarUrl: null }, NOISE_SYMBOL, 'Noise', 0, 0, now)
+}
+
+export function nextShockDelay(rng: () => number): number {
+  const unit = rng()
+  return Math.round(5_000 + unit * unit * 70_000)
+}
+
+export function rollShock(rng: () => number): { side: 'buy' | 'sell'; giant: boolean; magnitude: number } {
+  const side = rng() < 0.5 ? 'sell' : 'buy'
+  const giant = rng() < 0.2
+  const magnitude = giant ? 0.08 + rng() * 0.32 : 0.0015 + rng() * 0.0225
+  return { side, giant, magnitude }
+}
+
+export function applyShock(launch: Launch, shock: { side: 'buy' | 'sell'; magnitude: number }, now: number): Launch {
+  const price = priceOf(launch)
+  const signed = shock.side === 'buy' ? shock.magnitude : -shock.magnitude
+  const next = Math.max(NOISE_FLOOR, Math.round(price * (1 + signed) * 10_000) / 10_000)
+  return {
+    ...launch,
+    price: next,
+    prevPrice: price,
+    prints: pushPrint(launch.prints, now, next, 2000),
+  }
+}
+
+export function shockLaunch(existing: Launch | undefined, now: number, rng: () => number): Launch | null {
+  if (existing && (existing.symbol !== NOISE_SYMBOL || existing.creator.id !== NOISE_ID)) return null
+  return applyShock(existing ?? noiseSeed(now), rollShock(rng), now)
 }

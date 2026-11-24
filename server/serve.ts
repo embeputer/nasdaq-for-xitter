@@ -3,6 +3,7 @@ import { createServer } from 'node:http'
 import { extname, join, resolve, sep } from 'node:path'
 import { handleApi } from './http.ts'
 import { runIngest } from './ingest.ts'
+import { startNoise } from './noise.ts'
 
 const root = resolve(process.cwd(), 'dist')
 const port = Number(process.env.PORT || 8787)
@@ -82,3 +83,4 @@ function tick() {
 
 setTimeout(tick, 2000)
 setInterval(tick, 15_000)
+startNoise()

@@ -1,6 +1,7 @@
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
+import { noisePosition } from '../lib/noise.ts'
 import { Discover, positionGroups, shortName } from './Discover.tsx'
 import { Leaderboard } from './Leaderboard.tsx'
 import type { Position } from '../types'
@@ -167,6 +168,41 @@ describe('chart heading', () => {
       }),
     )
     expect(stock).not.toContain('Change the logo')
+  })
+})
+
+describe('Noise', () => {
+  it('lists the house stock without a holder card', () => {
+    const house = noisePosition()
+    const html = renderToStaticMarkup(
+      createElement(Discover, {
+        house,
+        positions: [ant],
+        quotes: {
+          'launch:NOISE': {
+            id: 'launch:NOISE',
+            venue: 'launch',
+            symbol: 'NOISE',
+            name: 'Noise',
+            price: 1.2,
+            change: 0.2,
+            changePct: 20,
+            marketState: null,
+            asOf: 1,
+          },
+        },
+        viewer: null,
+        desks: ['nasdaq'],
+        selected: house,
+        onSelect: () => undefined,
+        candles: [],
+        chartError: null,
+      }),
+    )
+    expect(html).toContain('xitNOISE')
+    expect(html).toContain('Noise')
+    expect(html).not.toContain('Username')
+    expect(html).toContain('@z1xus')
   })
 })
 

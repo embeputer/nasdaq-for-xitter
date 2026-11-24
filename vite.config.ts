@@ -3,6 +3,7 @@ import type { Connect, Plugin } from 'vite'
 import { defineConfig } from 'vitest/config'
 import { handleApi } from './server/http.ts'
 import { runIngest } from './server/ingest.ts'
+import { startNoise } from './server/noise.ts'
 
 function marketApi(): Plugin {
   const attach = (middlewares: Connect.Server) => {
@@ -44,6 +45,7 @@ function marketApi(): Plugin {
     },
     configurePreviewServer(server) {
       attach(server.middlewares)
+      startNoise()
     },
   }
 }

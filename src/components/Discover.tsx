@@ -25,6 +25,7 @@ export function positionGroups(positions: Position[]): { screenName: string; pos
 }
 
 export function Discover({
+  house = null,
   positions,
   quotes,
   viewer,
@@ -35,6 +36,7 @@ export function Discover({
   chartError,
   onLogoSaved,
 }: {
+  house?: Position | null
   positions: Position[]
   quotes: Record<string, Quote>
   viewer: Viewer | null
@@ -61,6 +63,25 @@ export function Discover({
     <div className="terminal">
       <aside className="book">
         <p className="feed-kicker">Discover</p>
+        {house ? (
+          <button
+            type="button"
+            className={selected?.id === house.id ? 'name selected' : 'name'}
+            onClick={() => onSelect(house)}
+          >
+            <span>
+              <strong>{house.label}</strong>
+              <em>{house.name}</em>
+            </span>
+            <span className="name-px">
+              <strong>
+                {quotes[`${house.venue}:${house.symbol}`]
+                  ? formatPrice(quotes[`${house.venue}:${house.symbol}`]!.price, house.venue)
+                  : '—'}
+              </strong>
+            </span>
+          </button>
+        ) : null}
         <ul className="names">
           {groups.map((group) => {
             const key = group.screenName.toLowerCase()
@@ -175,6 +196,7 @@ export function Discover({
                 )}
               </div>
             </header>
+            {house && selected.id === house.id ? null : (
             <div className="position-card">
               <p>
                 <span>Username</span>
@@ -195,6 +217,7 @@ export function Discover({
                 <strong className={pnlClass(openPnl(selected, quote?.price))}>{formatUsd(openPnl(selected, quote?.price), true)}</strong>
               </p>
             </div>
+            )}
             <div className="chart-wrap">
               <ChartPane candles={candles} quote={quote} seriesId={`${selected.venue}:${selected.symbol}`} />
               {chartError ? <p className="chart-error">{chartError}</p> : null}

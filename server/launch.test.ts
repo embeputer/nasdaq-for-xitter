@@ -1,5 +1,20 @@
 import { describe, expect, it } from 'vitest'
-import { cleanLaunchSymbol, launchAmounts, planBuy, planSell, planSpend, priceOf, seedLaunch } from './launch.ts'
+import { memoryStore, type PaymentRow } from './store.ts'
+import {
+  applyShock,
+  cleanLaunchSymbol,
+  launchAmounts,
+  launchCandles,
+  nextShockDelay,
+  noiseSeed,
+  planBuy,
+  planSell,
+  planSpend,
+  priceOf,
+  rollShock,
+  seedLaunch,
+  shockLaunch,
+} from './launch.ts'
 
 const ada = { id: '9', screenName: 'ada', name: 'Ada', avatarUrl: null }
 
@@ -39,6 +54,67 @@ describe('user stocks', () => {
     expect(sold.supply).toBe(0)
     expect(priceOf(sold)).toBe(1)
     expect(sold.cashCents).toBe(10_000)
+  })
+
+  it('walks Noise at a random size and prints it onto the candles', () => {
+    const sell = rollShock(() => 0)
+    expect(sell).toEqual({ side: 'sell', giant: true, magnitude: 0.08 })
+    const buy = rollShock(() => 0.99)
+    expect(buy.side).toBe('buy')
+    expect(buy.giant).toBe(false)
+    expect(buy.magnitude).toBeCloseTo(0.023775)
+    expect(nextShockDelay(() => 0)).toBe(5_000)
+    expect(nextShockDelay(() => 1)).toBe(75_000)
+    const seeded = noiseSeed(1_000)
+    const shocked = applyShock(seeded, sell, 2_000)
+    expect(shocked.cashCents).toBe(0)
+    expect(shocked.supply).toBe(0)
+    expect(priceOf(shocked)).toBeCloseTo(0.92)
+    const candles = launchCandles(shocked, '1m')
+    expect(candles).toHaveLength(1)
+    expect(candles[0]).toMatchObject({ open: 1, high: 1, low: 0.92, close: 0.92 })
+    const later = applyShock(shocked, { side: 'buy', magnitude: 0.5 }, 70_000)
+    const next = launchCandles(later, '1m')
+    expect(next).toHaveLength(2)
+    expect(next[1]?.close).toBeCloseTo(1.38)
+    const flat = planSell(later, 0, 0, 80_000)
+    expect(priceOf(flat)).toBeCloseTo(1.38)
+    expect(shockLaunch(seedLaunch({ id: '9', screenName: 'ada', name: 'Ada', avatarUrl: null }, 'NOISE', 'Noise', 100, 0, 1), 2, () => 0)).toBeNull()
+  })
+
+  it('seeds Noise without a holder and leaves a real NOISE launch alone', async () => {
+    const ledger = memoryStore()
+    await ledger.shockNoise(2_000, () => 0)
+    expect(await ledger.positions()).toEqual([])
+    expect((await ledger.launchCandles('NOISE', '1m'))[0]?.close).toBeCloseTo(0.92)
+    const ada = { id: '9', screenName: 'ada', name: 'Ada', avatarUrl: null }
+    const owned = memoryStore()
+    const row: PaymentRow = {
+      id: 'v',
+      status: 'processing',
+      amountCents: 5000,
+      note: 'vault',
+      desk: 'nasdaq',
+      senderId: ada.id,
+      senderName: ada.name,
+      senderScreen: ada.screenName,
+      avatarUrl: null,
+      detail: '',
+      updatedAt: 1,
+    }
+    await owned.creditVault(row, ada)
+    const opened = await owned.openLaunch({
+      person: ada,
+      symbol: 'NOISE',
+      name: 'Noise',
+      liquidityCents: 1000,
+      investCents: 0,
+      now: 2,
+    })
+    expect(opened.ok).toBe(true)
+    await owned.shockNoise(3_000, () => 0)
+    expect((await owned.launchQuote('NOISE'))?.price).toBe(1)
+    expect((await owned.launchQuote('NOISE'))?.creator).toBe('ada')
   })
 
   it('rejects a fund under $1 and an invest under $1', () => {

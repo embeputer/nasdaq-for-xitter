@@ -12,10 +12,12 @@ import {
   launchFailure,
   launchListing as toListing,
   launchQuote as toQuote,
+  NOISE_SYMBOL,
   planBuy,
   planSell,
   planSpend,
   seedLaunch,
+  shockLaunch,
   type Launch,
   type LaunchFailure,
 } from './launch.ts'
@@ -114,6 +116,7 @@ export type Store = {
   ): Promise<{ ok: true; rev: number } | { ok: false; error: 'bad_logo' | 'missing' | 'forbidden'; message: string }>
   buyLaunch(row: PaymentRow, person: Person, symbol: string, now: number): Promise<'filled' | 'missing'>
   settleLaunch(position: Position, cents: number): Promise<void>
+  shockNoise(now: number, rng?: () => number): Promise<void>
   paddingCents(desk: string): Promise<number>
   paddingReady(desk: string): Promise<boolean>
   reservedCents(desk: string): Promise<number>
@@ -465,6 +468,12 @@ function storeFrom(
         const launch = doc.launches[position.symbol]
         if (launch) doc.launches[position.symbol] = planSell(launch, position.qty, cents, Date.now())
         doc.meta[key] = '1'
+      })
+    },
+    async shockNoise(now, rng = Math.random) {
+      await edit((doc) => {
+        const next = shockLaunch(doc.launches[NOISE_SYMBOL], now, rng)
+        if (next) doc.launches[NOISE_SYMBOL] = next
       })
     },
     async paddingCents(desk) {
@@ -1108,6 +1117,16 @@ async function postgresStore(url: string): Promise<Store> {
           insert into larp_meta (key, value) values (${key}, '1')
           on conflict (key) do update set value = excluded.value
         `
+      })
+    },
+    async shockNoise(now, rng = Math.random) {
+      await sql.begin(async (tx) => {
+        await tx`select pg_advisory_xact_lock(847211)`
+        const found = await tx<{ body: Launch }[]>`select body from larp_launches where id = ${NOISE_SYMBOL} for update`
+        const next = shockLaunch(found[0]?.body, now, rng)
+        if (!next) return
+        if (found[0]) await tx`update larp_launches set body = ${tx.json(next as never)} where id = ${NOISE_SYMBOL}`
+        else await tx`insert into larp_launches (id, body) values (${NOISE_SYMBOL}, ${tx.json(next as never)})`
       })
     },
     async paddingCents(desk) {
