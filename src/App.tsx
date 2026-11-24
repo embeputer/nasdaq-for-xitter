@@ -155,6 +155,7 @@ export default function App() {
 
   return (
     <div className={view === 'discover' ? 'app app-board' : 'app app-sheet'}>
+      <div className="chrome">
       <header className="topbar">
         <p className="mark">Nasdaq for Xitter</p>
         <nav>
@@ -165,10 +166,6 @@ export default function App() {
             Portfolio
           </button>
         </nav>
-        <p className={`session session-${session}`} title="US stocks, New York time">
-          <i aria-hidden="true" />
-          {SESSION_LABEL[session]}
-        </p>
         <div className="snap">
           {viewer ? (
             <button
@@ -191,6 +188,10 @@ export default function App() {
           </p>
         </div>
       </header>
+      <p className={`session session-${session}`} title="US stocks, New York time">
+        {SESSION_LABEL[session]}
+      </p>
+      </div>
       {!book.durable ? <p className="hint durable">This deploy has no database, so positions will not stick. Set POSTGRES_URL.</p> : null}
       {notice ? <p className="hint durable">{notice}</p> : null}
       {view === 'discover' ? (

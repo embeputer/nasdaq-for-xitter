@@ -55,6 +55,12 @@ img { display: block; }
   min-height: 100dvh;
 }
 
+.chrome {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
 .topbar {
   display: flex;
   align-items: center;
@@ -64,9 +70,6 @@ img { display: block; }
   background: rgba(0, 0, 0, 0.85);
   border-bottom: 1px solid var(--line);
   backdrop-filter: blur(12px);
-  position: sticky;
-  top: 0;
-  z-index: 2;
 }
 
 .mark {
@@ -238,25 +241,19 @@ button:focus-visible {
 }
 
 .session {
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  gap: 6px;
-  margin: 0 0 0 8px;
-  color: var(--ink);
+  justify-content: center;
+  height: 34px;
+  margin: 0;
   font-size: 13px;
-  font-weight: 700;
-  white-space: nowrap;
+  font-weight: 800;
+  letter-spacing: 0.02em;
 }
-.session i {
-  width: 8px;
-  height: 8px;
-  border-radius: 999px;
-  background: transparent;
-  box-shadow: inset 0 0 0 1.5px var(--ink);
-}
-.session-open i { background: var(--ink); box-shadow: none; }
-.session-closed { color: var(--dim); }
-.session-closed i { box-shadow: inset 0 0 0 1.5px var(--dim); }
+.session-pre { background: #ff8c3a; color: #1a0d04; }
+.session-open { background: #1faf4a; color: #031408; }
+.session-post { background: #7a45b0; color: #f8f3ff; }
+.session-closed { background: #8b939a; color: #121417; }
 .last { text-align: right; font-variant-numeric: tabular-nums; }
 .last strong { display: block; font-size: 31px; font-weight: 800; letter-spacing: -0.03em; }
 .last em { font-style: normal; color: var(--dim); font-size: 15px; }
@@ -528,8 +525,7 @@ button:focus-visible {
   .topbar { gap: 8px; height: auto; padding: 8px 12px; flex-wrap: wrap; }
   .topbar nav { height: auto; }
   .topbar nav button { height: auto; padding-top: 12px; padding-bottom: 12px; }
-  .session { margin: 0; height: 32px; }
-  .snap { margin-left: 0; width: auto; flex: 1; justify-content: flex-end; gap: 12px; }
+  .snap { margin-left: 0; width: 100%; justify-content: space-between; }
   .sheet { padding-bottom: 64px; }
   .stats { grid-template-columns: 1fr 1fr; }
   .composer-grid { grid-template-columns: 1fr; }
