@@ -79,12 +79,10 @@ export function Discover({
             <header className="quote-head">
               <div>
                 <h2>
-                  <a href={`https://xitter.space/${encodeURIComponent(selected.person.screenName)}`}>@{selected.person.screenName}</a>
-                </h2>
-                <p className="label-name">
-                  {selected.label} · {selected.name}
+                  {shortName(selected.name)} · {selected.label}
                   {selected.venue === 'crypto' || selected.venue === 'perpetual' ? <span className="all-day">Trades all day</span> : null}
-                </p>
+                </h2>
+                <p className="label-name">{selected.name}</p>
                 {selected.venue === 'launch' && quote?.creator && quote.creator.toLowerCase() !== selected.person.screenName.toLowerCase() ? (
                   <a className="creator" href={`https://xitter.space/${encodeURIComponent(quote.creator)}`}>
                     @{quote.creator}
@@ -105,7 +103,9 @@ export function Discover({
             <div className="position-card">
               <p>
                 <span>Username</span>
-                <strong>@{selected.person.screenName}</strong>
+                <strong>
+                  <a href={`https://xitter.space/${encodeURIComponent(selected.person.screenName)}`}>@{selected.person.screenName}</a>
+                </strong>
               </p>
               <p>
                 <span>Size</span>
@@ -132,6 +132,16 @@ export function Discover({
       </section>
     </div>
   )
+}
+
+export function shortName(name: string): string {
+  const head = (name.split(',')[0] ?? name).trim()
+  const trimmed = head
+    .replace(/\s+class\s+[a-z0-9]+\s+common\s+stock$/i, '')
+    .replace(/\s+(common|preferred)\s+stock$/i, '')
+    .replace(/\s+ordinary\s+shares$/i, '')
+    .trim()
+  return trimmed || name
 }
 
 function deskList(desks: string[]): string {
