@@ -98,6 +98,58 @@ export async function sendRefund(token: string, to: string, amountCents: number,
   if (!res.ok && res.status !== 200) throw new Error(`refund_${res.status}`)
 }
 
+export async function transferLimit(token: string): Promise<number> {
+  if (!token) throw named('MissingWriteToken', 'missing_write_token')
+  const res = await xitterFetch(token, new URL('/api/v1/money', XITTER_ORIGIN))
+  if (!res.ok) throw named('PayoutFailed', (await readXitterError(res)) || `limit_${res.status}`)
+  const body = (await res.json()) as { data?: { max_transfer_cents?: unknown } }
+  const max = body.data?.max_transfer_cents
+  if (typeof max !== 'number' || !Number.isSafeInteger(max) || max < 1) throw named('PayoutFailed', 'Could not read the send limit.')
+  return max
+}
+
+export async function sendPayout(token: string, to: string, amountCents: number, note: string, key: string): Promise<void> {
+  if (!token) throw named('MissingWriteToken', 'missing_write_token')
+  if (!Number.isSafeInteger(amountCents) || amountCents < 1) throw named('BadAmount', 'bad_amount')
+  const first = await postSend(token, to, amountCents, note, key)
+  if (first.ok) return
+  const message = await readXitterError(first)
+  if (first.status === 403 && /only read/i.test(message)) throw named('ReadOnlyToken', message || 'read_only')
+  if (first.status === 403 && /disclaimer/i.test(message)) {
+    const accepted = await xitterFetch(token, new URL('/api/v1/money/disclaimer', XITTER_ORIGIN), {
+      method: 'POST',
+      body: '{}',
+    })
+    if (!accepted.ok) throw named('PayoutFailed', message || 'disclaimer')
+    const second = await postSend(token, to, amountCents, note, key)
+    if (second.ok) return
+    const again = await readXitterError(second)
+    if (second.status === 403 && /only read/i.test(again)) throw named('ReadOnlyToken', again || 'read_only')
+    throw named('PayoutFailed', again || `send_${second.status}`)
+  }
+  throw named('PayoutFailed', message || `send_${first.status}`)
+}
+
+async function postSend(token: string, to: string, amountCents: number, note: string, key: string): Promise<Response> {
+  return xitterFetch(token, new URL('/api/v1/money/send', XITTER_ORIGIN), {
+    method: 'POST',
+    body: JSON.stringify({ to, amount_cents: amountCents, note, idempotency_key: key }),
+  })
+}
+
+async function readXitterError(res: Response): Promise<string> {
+  try {
+    const body = (await res.json()) as { error?: unknown }
+    if (typeof body.error === 'string') {
+      const text = body.error.trim()
+      if (text.length > 0 && text.length <= 180 && !/xit_|bearer/i.test(text)) return text
+    }
+  } catch {
+    // the body was not a JSON error
+  }
+  return ''
+}
+
 export async function fetchMe(token: string): Promise<Person> {
   const res = await xitterFetch(token, new URL('/api/v1/me', XITTER_ORIGIN))
   if (!res.ok) throw new Error(`me_${res.status}`)

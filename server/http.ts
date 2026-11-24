@@ -2,7 +2,8 @@ import { randomBytes } from 'node:crypto'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { fileBuy, fileClose, samePerson, type Person } from './book.ts'
 import { getCandles, getQuotes, isInterval, parseId, searchMarket } from './market.ts'
-import { adminNames, findPerson, fetchMe, loadDesks } from './money.ts'
+import { cashOut } from './close.ts'
+import { adminNames, findPerson, fetchMe, loadDesks, sendPayout, transferLimit } from './money.ts'
 import { runIngest } from './ingest.ts'
 import {
   clientDocument,
@@ -262,28 +263,67 @@ async function openPosition(req: IncomingMessage, res: ServerResponse) {
 async function closePosition(req: IncomingMessage, res: ServerResponse) {
   const viewer = await viewerFrom(req)
   if (!viewer) {
-    send(res, 401, { error: 'unauthorized' })
+    send(res, 401, { error: 'unauthorized', message: 'Log in to close a position.' })
     return
   }
   const body = await readJson(req)
   const id = text(body.id)
+  const cash = body.cash !== false
+  if (!cash && !viewer.admin) {
+    send(res, 403, { error: 'forbidden', message: 'Only an admin can close without sending cash.' })
+    return
+  }
   const ledger = await openLedger()
   const position = (await ledger.positions()).find((item) => item.id === id)
   if (!position) {
-    send(res, 404, { error: 'not_found' })
+    send(res, 404, { error: 'not_found', message: 'That position is already closed.' })
     return
   }
   if (!viewer.admin && !samePerson(viewer.screenName, position.person.screenName)) {
-    send(res, 403, { error: 'forbidden' })
+    send(res, 403, { error: 'forbidden', message: 'You can only close your own position.' })
     return
   }
   const [quote] = await getQuotes([`${position.venue}:${position.symbol}`])
   if (!quote || !(quote.price > 0)) {
-    send(res, 502, { error: 'no_price' })
+    send(res, 502, { error: 'no_price', message: "There's no price for this yet, so it can't be closed." })
     return
   }
-  await ledger.updateBook((positions) => fileClose(positions, id, quote.price))
-  send(res, 200, { ok: true })
+  if (!cash) {
+    await ledger.updateBook((positions) => fileClose(positions, id, quote.price))
+    send(res, 200, { ok: true, cash: false })
+    return
+  }
+  await withCloseLock(id, async () => {
+    const result = await cashOut({
+      ledger,
+      id,
+      price: quote.price,
+      desks: await loadDesks(),
+      limit: (desk) => transferLimit(desk.writeToken),
+      pay: (desk, to, cents, note, key) => sendPayout(desk.writeToken, to, cents, note, key),
+    })
+    if (!result.ok) {
+      send(res, result.status, { error: result.error, message: result.message })
+      return
+    }
+    send(res, 200, { ok: true, cash: true, cents: result.cents, screenName: result.screenName })
+  })
+}
+
+const closeLocks = new Map<string, Promise<void>>()
+
+function withCloseLock<T>(id: string, run: () => Promise<T>): Promise<T> {
+  const previous = closeLocks.get(id) ?? Promise.resolve()
+  const result = previous.then(run, run)
+  const settled = result.then(
+    () => undefined,
+    () => undefined,
+  )
+  closeLocks.set(id, settled)
+  void settled.then(() => {
+    if (closeLocks.get(id) === settled) closeLocks.delete(id)
+  })
+  return result
 }
 
 async function viewerFrom(req: IncomingMessage): Promise<(Person & { admin: boolean }) | null> {

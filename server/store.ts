@@ -40,6 +40,7 @@ export type Store = {
   takePayment(row: PaymentRow): Promise<'owned' | 'done' | 'busy'>
   finishPayment(row: PaymentRow): Promise<void>
   pendingPayments(now: number): Promise<PaymentRow[]>
+  payments(): Promise<PaymentRow[]>
   meta(key: string): Promise<string | null>
   setMeta(key: string, value: string): Promise<void>
   session(id: string): Promise<SessionUser | null>
@@ -173,6 +174,9 @@ function storeFrom(read: () => Doc, write: (doc: Doc) => void | Promise<void>): 
           row.status === 'pending_fill' ||
           (row.status === 'processing' && now - row.updatedAt > 120_000),
       )
+    },
+    async payments() {
+      return Object.values(read().payments)
     },
     async meta(key) {
       return read().meta[key] ?? null
@@ -337,6 +341,10 @@ async function postgresStore(url: string): Promise<Store> {
         where status in ('pending_refund', 'pending_fill')
           or (status = 'processing' and updated_at < ${now - 120_000})
       `
+      return rows.map((row) => row.body)
+    },
+    async payments() {
+      const rows = await sql<{ body: PaymentRow }[]>`select body from larp_payments`
       return rows.map((row) => row.body)
     },
     async meta(key) {

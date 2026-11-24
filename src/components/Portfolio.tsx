@@ -1,3 +1,4 @@
+import { useRef, useState } from 'react'
 import { VENUE_LABEL } from '../data/universe'
 import { formatClock, formatPct, formatPrice, formatQty, formatUsd, pnlClass } from '../lib/format'
 import { marketValue, openPnl } from '../lib/account'
@@ -19,7 +20,7 @@ export function Portfolio({
   fills: Fill[]
   quotes: Record<string, Quote>
   desks: string[]
-  onClose: (position: Position) => void
+  onClose: (position: Position, cash: boolean) => Promise<void>
   onOpened: () => void
 }) {
   if (!viewer) {
@@ -41,6 +42,27 @@ export function Portfolio({
   const invested = mine.reduce((sum, position) => sum + marketValue(position, quotes[`${position.venue}:${position.symbol}`]?.price), 0)
   const pnl = mine.reduce((sum, position) => sum + openPnl(position, quotes[`${position.venue}:${position.symbol}`]?.price), 0)
   const names = desks.length ? desks.map((desk) => `@${desk}`).join(' or ') : 'the desk'
+  const pending = useRef(false)
+  const [busy, setBusy] = useState(false)
+
+  async function close(position: Position, cash: boolean) {
+    if (pending.current) return
+    const price = quotes[`${position.venue}:${position.symbol}`]?.price
+    if (cash) {
+      const shown = price && price > 0 ? formatUsd(position.qty * price) : 'the current value'
+      if (!window.confirm(`Send ${shown} to @${position.person.screenName} and close this position?`)) return
+    } else if (!window.confirm(`Close @${position.person.screenName}'s ${position.label} without sending Equicoins?`)) {
+      return
+    }
+    pending.current = true
+    setBusy(true)
+    try {
+      await onClose(position, cash)
+    } finally {
+      pending.current = false
+      setBusy(false)
+    }
+  }
 
   return (
     <main className="sheet">
@@ -57,7 +79,13 @@ export function Portfolio({
         <h2>{viewer.admin ? 'Book' : 'Positions'}</h2>
         {mine.length === 0 ? (
           <p className="hint pad">No open positions. Send Equicoins to {names} with the ticker in the note.</p>
-        ) : null}
+        ) : (
+          <p className="hint pad">
+            {viewer.admin
+              ? 'Close pays the current value back. Without cash closes the book and sends nothing.'
+              : "Close pays the current value back. If that send fails, the position stays open."}
+          </p>
+        )}
         {mine.map((position) => {
           const price = quotes[`${position.venue}:${position.symbol}`]?.price
           const gain = openPnl(position, price)
@@ -85,9 +113,14 @@ export function Portfolio({
                 <em className={pnlClass(gain)}>
                   {formatUsd(gain, true)} {formatPct(pct)}
                 </em>
-                <button type="button" className="close" onClick={() => onClose(position)}>
+                <button type="button" className="close" disabled={busy} onClick={() => void close(position, true)}>
                   Close
                 </button>
+                {viewer.admin ? (
+                  <button type="button" className="text-btn" disabled={busy} onClick={() => void close(position, false)}>
+                    Without cash
+                  </button>
+                ) : null}
               </div>
             </article>
           )

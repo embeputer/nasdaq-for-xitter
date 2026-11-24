@@ -188,10 +188,23 @@ export default function App() {
           fills={viewer?.admin ? book.fills : book.fills.filter((fill) => fill.person.screenName.toLowerCase() === viewer?.screenName.toLowerCase())}
           quotes={quotes}
           desks={book.desks}
-          onClose={(position) => {
-            void closeFor(position.id).then(refresh).catch((error: unknown) => {
+          onClose={async (position, cash) => {
+            try {
+              const result = await closeFor(position.id, cash)
+              if (result.cash && result.screenName && typeof result.cents === 'number') {
+                setNotice(`Sent ${formatUsd(result.cents / 100)} to @${result.screenName}.`)
+              } else {
+                setNotice('Closed without sending Equicoins.')
+              }
+            } catch (error: unknown) {
               setNotice(error instanceof Error ? error.message : 'Could not close.')
-            })
+              return
+            }
+            try {
+              await refresh()
+            } catch {
+              // the book poll retries
+            }
           }}
           onOpened={() => {
             void refresh()

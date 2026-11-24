@@ -416,6 +416,8 @@ button:focus-visible {
 .holding-end strong { font-size: 15px; font-variant-numeric: tabular-nums; font-weight: 700; }
 .holding-end em { font-style: normal; font-variant-numeric: tabular-nums; font-size: 13px; }
 .holding-end .close { height: 32px; padding: 0 16px; }
+.holding-end .text-btn { height: 32px; font-size: 13px; }
+.holding-end .close:disabled, .holding-end .text-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .fills ul { list-style: none; padding: 0; margin: 0; }
 .fills li {
   display: flex;

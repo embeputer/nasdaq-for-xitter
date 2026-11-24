@@ -62,7 +62,23 @@ describe('request adapter', () => {
       }),
     )
     expect(res.status).toBe(404)
-    expect(await res.json()).toEqual({ error: 'not_found' })
+    expect(await res.json()).toEqual({ error: 'not_found', message: 'That position is already closed.' })
+  })
+
+  it('refuses a member closing without cash', async () => {
+    const res = await handleRequest(
+      new Request('https://nasdaq.test/api/positions/close', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          cookie: `larp_session=${encodeURIComponent(signValue('sess-test'))}`,
+        },
+        body: JSON.stringify({ id: 'pos:stock:AAPL:ada', cash: false }),
+      }),
+    )
+    expect(res.status).toBe(403)
+    const body = (await res.json()) as { error: string }
+    expect(body.error).toBe('forbidden')
   })
 
   it('sends the login cookie on a redirect', async () => {

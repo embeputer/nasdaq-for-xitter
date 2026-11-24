@@ -64,13 +64,15 @@ export async function openFor(id: string, amount: number, screenName: string): P
   return body.screenName ?? screenName
 }
 
-export async function closeFor(id: string): Promise<void> {
+export async function closeFor(id: string, cash = true): Promise<{ cash: boolean; cents?: number; screenName?: string }> {
   const res = await fetch('/api/positions/close', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ id }),
+    body: JSON.stringify({ id, cash }),
   })
-  if (!res.ok) throw new Error('Could not close that position.')
+  const body = (await res.json().catch(() => ({}))) as { message?: string; cash?: boolean; cents?: number; screenName?: string }
+  if (!res.ok) throw new Error(body.message || 'Could not close that position.')
+  return { cash: body.cash !== false, cents: body.cents, screenName: body.screenName }
 }
 
 export async function searchPeople(query: string): Promise<{ people: Person[]; message: string | null }> {
