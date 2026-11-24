@@ -216,6 +216,13 @@ export function planSpend(
   return { spends, next }
 }
 
+export function filterLaunchListings(listings: Listing[], query: string): Listing[] {
+  const q = query.trim().toLowerCase()
+  return listings
+    .filter((hit) => hit.venue === 'launch' && (!q || `${hit.label} ${hit.name} ${hit.symbol}`.toLowerCase().includes(q)))
+    .sort((a, b) => a.symbol.localeCompare(b.symbol))
+}
+
 export function launchListing(launch: Launch): Listing {
   return {
     id: `launch:${launch.symbol}`,

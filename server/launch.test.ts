@@ -12,6 +12,7 @@ import {
   planSpend,
   priceOf,
   rollShock,
+  filterLaunchListings,
   seedLaunch,
   shockLaunch,
 } from './launch.ts'
@@ -115,6 +116,37 @@ describe('user stocks', () => {
     await owned.shockNoise(3_000, () => 0)
     expect((await owned.launchQuote('NOISE'))?.price).toBe(1)
     expect((await owned.launchQuote('NOISE'))?.creator).toBe('ada')
+  })
+
+  it('lists xitStocks for the admin picker', async () => {
+    const ledger = memoryStore()
+    await ledger.shockNoise(2_000, () => 0)
+    const ada = { id: '9', screenName: 'ada', name: 'Ada', avatarUrl: null }
+    await ledger.creditVault(
+      {
+        id: 'v',
+        status: 'processing',
+        amountCents: 5000,
+        note: 'vault',
+        desk: 'nasdaq',
+        senderId: ada.id,
+        senderName: ada.name,
+        senderScreen: ada.screenName,
+        avatarUrl: null,
+        detail: '',
+        updatedAt: 1,
+      },
+      ada,
+    )
+    await ledger.openLaunch({ person: ada, symbol: 'YAMS', name: 'Yams', liquidityCents: 1000, investCents: 0, now: 3 })
+    expect(await ledger.launchListings('')).toEqual([
+      { id: 'launch:NOISE', venue: 'launch', symbol: 'NOISE', label: 'xitNOISE', name: 'Noise' },
+      { id: 'launch:YAMS', venue: 'launch', symbol: 'YAMS', label: 'xitYAMS', name: 'Yams' },
+    ])
+    expect(await ledger.launchListings('yam')).toEqual([
+      { id: 'launch:YAMS', venue: 'launch', symbol: 'YAMS', label: 'xitYAMS', name: 'Yams' },
+    ])
+    expect(filterLaunchListings([], 'noise')).toEqual([])
   })
 
   it('rejects a fund under $1 and an invest under $1', () => {

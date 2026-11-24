@@ -15,6 +15,9 @@ export function openOn(venue: Venue): Instrument {
   if (venue === 'perpetual') {
     return { id: 'perpetual:BTC', venue: 'perpetual', symbol: 'BTC', label: 'BTC-PERP', name: 'Bitcoin' }
   }
+  if (venue === 'launch') {
+    return { id: 'launch:NOISE', venue: 'launch', symbol: 'NOISE', label: 'xitNOISE', name: 'Noise' }
+  }
   return DEFAULT_INSTRUMENT
 }
 

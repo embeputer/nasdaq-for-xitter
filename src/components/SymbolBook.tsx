@@ -6,6 +6,7 @@ import type { Instrument, Quote, Venue } from '../types'
 const CLASSES: { venue: Venue; label: string }[] = [
   { venue: 'stock', label: 'Stocks' },
   { venue: 'crypto', label: 'Crypto' },
+  { venue: 'launch', label: 'xitStocks' },
 ]
 
 export function SymbolBook({
@@ -94,7 +95,7 @@ export function SymbolBook({
         <span className="sr">Find an instrument</span>
         <input
           value={query}
-          placeholder="Any name"
+          placeholder={venue === 'launch' ? 'Any xitStock' : 'Any name'}
           onChange={(event) => setQuery(event.target.value)}
         />
       </label>

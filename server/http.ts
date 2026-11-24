@@ -68,6 +68,10 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse): Prom
     }
     if (url.pathname === '/api/search') {
       const venue = url.searchParams.get('venue') ?? 'stock'
+      if (venue === 'launch') {
+        send(res, 200, { hits: await (await openLedger()).launchListings(url.searchParams.get('q') ?? '') })
+        return
+      }
       if (venue !== 'stock' && venue !== 'crypto' && venue !== 'perpetual') {
         send(res, 400, { error: 'bad_venue' })
         return
@@ -268,21 +272,17 @@ async function openPosition(req: IncomingMessage, res: ServerResponse) {
     send(res, 400, { error: 'closed', message: 'Perpetuals are closed.' })
     return
   }
-  if (parsed.venue === 'launch') {
-    send(res, 400, { error: 'closed', message: 'Launch a user stock from your portfolio.' })
-    return
-  }
   const person = await findPerson(screenName)
   if (!person) {
     send(res, 400, { error: 'no_person' })
     return
   }
-  const [quote] = await getQuotes([id])
+  const ledger = await openLedger()
+  const [quote] = parsed.venue === 'launch' ? [await ledger.launchQuote(parsed.symbol)] : await getQuotes([id])
   if (!quote || !(quote.price > 0)) {
     send(res, 502, { error: 'no_price' })
     return
   }
-  const ledger = await openLedger()
   await ledger.updateBook((positions) =>
     fileBuy(positions, {
       venue: parsed.venue,

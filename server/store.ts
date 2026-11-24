@@ -10,6 +10,7 @@ import {
   launchAmounts,
   launchCandles as toCandles,
   launchFailure,
+  filterLaunchListings,
   launchListing as toListing,
   launchQuote as toQuote,
   NOISE_SYMBOL,
@@ -96,6 +97,7 @@ export type Store = {
   creditVault(row: PaymentRow, person: Person): Promise<void>
   vaultCents(screenName: string): Promise<number>
   launchListing(symbol: string): Promise<Listing | null>
+  launchListings(query?: string): Promise<Listing[]>
   launchQuote(symbol: string): Promise<Quote | null>
   launchQuotes(symbols: string[]): Promise<Quote[]>
   launchCandles(symbol: string, interval: Interval): Promise<Candle[]>
@@ -319,6 +321,9 @@ function storeFrom(
     async launchListing(symbol) {
       const launch = read().launches[symbol]
       return launch ? toListing(launch) : null
+    },
+    async launchListings(query = '') {
+      return filterLaunchListings(Object.values(read().launches).map(toListing), query)
     },
     async launchQuote(symbol) {
       const launch = read().launches[symbol]
@@ -943,6 +948,10 @@ async function postgresStore(url: string): Promise<Store> {
     async launchListing(symbol) {
       const rows = await sql<{ body: Launch }[]>`select body from larp_launches where id = ${symbol}`
       return rows[0] ? toListing(rows[0].body) : null
+    },
+    async launchListings(query = '') {
+      const rows = await sql<{ body: Launch }[]>`select body from larp_launches`
+      return filterLaunchListings(rows.map((row) => toListing(row.body)), query)
     },
     async launchQuote(symbol) {
       const rows = await sql<{ body: Launch }[]>`select body from larp_launches where id = ${symbol}`
