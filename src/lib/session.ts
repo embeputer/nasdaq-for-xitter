@@ -12,6 +12,7 @@ export function shownSession(
   clock: EquitySession,
 ): { id: EquitySession | 'all'; label: string; title: string } {
   if (venue === 'launch') return { id: 'all', label: 'Trades all day', title: 'User stocks trade all day' }
+  if (venue === 'crypto') return { id: 'all', label: 'Trades all day', title: 'Crypto trades all day' }
   return { id: clock, label: SESSION_LABEL[clock], title: 'US stocks, New York time' }
 }
 

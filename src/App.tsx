@@ -234,7 +234,7 @@ export default function App() {
           </p>
         </div>
       </header>
-      <SessionRibbon id={ribbon.id} label={ribbon.label} now={now} />
+      <SessionRibbon id={ribbon.id} label={ribbon.label} title={ribbon.title} now={now} />
       </div>
       {viewer && launchOpen ? (
         <LaunchForm

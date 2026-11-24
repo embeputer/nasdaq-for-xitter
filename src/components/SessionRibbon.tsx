@@ -3,10 +3,12 @@ import { formatCountdown, sessionSchedule, type EquitySession } from '../lib/ses
 export function SessionRibbon({
   id,
   label,
+  title,
   now,
 }: {
   id: EquitySession | 'all'
   label: string
+  title: string
   now: Date
 }) {
   const active = id === 'all' ? null : id
@@ -32,7 +34,7 @@ export function SessionRibbon({
             ))}
           </>
         ) : (
-          <p className="session-zone">User stocks trade all day.</p>
+          <p className="session-zone">{title}</p>
         )}
       </div>
     </div>

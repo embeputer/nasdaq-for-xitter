@@ -134,6 +134,12 @@ describe('equity session', () => {
       title: 'User stocks trade all day',
     })
     expect(shownSession('stock', 'closed').label).toBe('Market closed')
-    expect(shownSession('crypto', 'pre').label).toBe('Pre-market')
+    expect(shownSession('crypto', 'pre')).toEqual({
+      id: 'all',
+      label: 'Trades all day',
+      title: 'Crypto trades all day',
+    })
+    expect(shownSession('crypto', 'closed').label).toBe('Trades all day')
+    expect(shownSession('crypto', 'post').label).toBe('Trades all day')
   })
 })
