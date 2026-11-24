@@ -245,6 +245,15 @@ button:focus-visible {
   letter-spacing: -0.03em;
   line-height: 1.15;
 }
+.quote-head .creator {
+  display: inline-block;
+  margin-top: 2px;
+  color: var(--dim);
+  font-size: 15px;
+  font-weight: 700;
+  text-decoration: none;
+}
+.quote-head .creator:hover { color: var(--ink); text-decoration: underline; }
 .quote-head h2 .all-day {
   margin-left: 8px;
   color: var(--dim);

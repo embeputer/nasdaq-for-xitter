@@ -238,6 +238,7 @@ export function launchQuote(launch: Launch, now: number): Quote | null {
     changePct: launch.prevPrice > 0 ? (change / launch.prevPrice) * 100 : 0,
     marketState: null,
     asOf: now,
+    creator: launch.creator.screenName || undefined,
   }
 }
 

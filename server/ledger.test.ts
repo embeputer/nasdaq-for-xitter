@@ -363,6 +363,7 @@ describe('ingest', () => {
     expect(bought.refunded).toBe(0)
     const quote = await ledger.launchQuote('YAMS')
     expect(quote?.price).toBeCloseTo(20 / 19)
+    expect(quote?.creator).toBe('ada')
     const bobPosition = (await ledger.positions()).find((position) => position.person.screenName === 'bob')
     expect(bobPosition?.qty).toBeCloseTo(9)
     expect(bobPosition?.label).toBe('xitYAMS')

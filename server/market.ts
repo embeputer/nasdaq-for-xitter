@@ -11,6 +11,7 @@ export type Quote = {
   changePct: number
   marketState: string | null
   asOf: number
+  creator?: string
 }
 
 export type Candle = {

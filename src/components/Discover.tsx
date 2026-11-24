@@ -87,8 +87,13 @@ export function Discover({
                 <p className="label-name">{instrument.name}</p>
                 <h2>
                   {instrument.label}
-                  {instrument.venue === 'stock' ? null : <span className="all-day">Trades all day</span>}
+                  {instrument.venue === 'crypto' || instrument.venue === 'perpetual' ? <span className="all-day">Trades all day</span> : null}
                 </h2>
+                {instrument.venue === 'launch' && quote?.creator ? (
+                  <a className="creator" href={`https://xitter.space/${encodeURIComponent(quote.creator)}`}>
+                    @{quote.creator}
+                  </a>
+                ) : null}
               </div>
               <div className="last">
                 <strong>{quote ? formatPrice(quote.price, instrument.venue) : '—'}</strong>
