@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { closeFor, fetchBook, fetchCandles, fetchQuotes, fetchSession, logout, type Book, type Viewer } from './lib/api'
+import { closeFor, fetchBook, fetchCandles, fetchQuotes, fetchSession, logout, withdrawFor, type Book, type Viewer } from './lib/api'
 import { marketValue } from './lib/account'
 import { formatUsd } from './lib/format'
 import { equitySession, sessionFromMarketState, shownSession, type EquitySession } from './lib/session'
@@ -38,6 +38,7 @@ export default function App() {
   const [chartError, setChartError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [launchOpen, setLaunchOpen] = useState(false)
+  const [withdrawing, setWithdrawing] = useState(false)
   const [now, setNow] = useState(() => new Date())
 
   useEffect(() => {
@@ -159,6 +160,26 @@ export default function App() {
     setBook(await fetchBook())
   }
 
+  async function withdrawCash() {
+    if (withdrawing || !viewer) return
+    const shown = book.nqfxCents >= 100 ? formatUsd(book.nqfxCents / 100) : 'your Cash'
+    if (!window.confirm(`Send ${shown} from Cash to @${viewer.screenName}?`)) return
+    setWithdrawing(true)
+    try {
+      const result = await withdrawFor()
+      setNotice(
+        result.short
+          ? `Sent ${formatUsd(result.cents / 100)} to @${result.screenName}. The rest is still in Cash.`
+          : `Sent ${formatUsd(result.cents / 100)} to @${result.screenName}.`,
+      )
+      await refresh()
+    } catch (error: unknown) {
+      setNotice(error instanceof Error ? error.message : 'Could not withdraw.')
+    } finally {
+      setWithdrawing(false)
+    }
+  }
+
   return (
     <div className={view === 'discover' ? 'app app-board' : 'app app-sheet'}>
       <div className="chrome">
@@ -176,6 +197,11 @@ export default function App() {
           </button>
         </nav>
         <div className="snap">
+          {viewer ? (
+            <button type="button" className="launch-open" disabled={withdrawing} onClick={() => void withdrawCash()}>
+              Withdraw
+            </button>
+          ) : null}
           {viewer ? (
             <button type="button" className="launch-open" onClick={() => setLaunchOpen(true)}>
               Launch a stock
@@ -240,6 +266,8 @@ export default function App() {
           quotes={quotes}
           desks={book.desks}
           nqfxCents={book.nqfxCents}
+          withdrawing={withdrawing}
+          onWithdraw={() => void withdrawCash()}
           onClose={async (position, cash) => {
             try {
               const result = await closeFor(position.id, cash)

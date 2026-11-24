@@ -30,7 +30,21 @@ import {
   setOpening,
   takePadding,
 } from './padding.ts'
-import { addScore, decideTag, deskVault, ensureScores, undoWithdraw, type Mention, type TagInput, type TagResult, type TradeDoc } from './tag.ts'
+import {
+  addScore,
+  decideTag,
+  deskVault,
+  ensureScores,
+  noteCash,
+  placeCash,
+  releaseCash,
+  undoWithdraw,
+  type CashHold,
+  type Mention,
+  type TagInput,
+  type TagResult,
+  type TradeDoc,
+} from './tag.ts'
 import type { Candle, Interval, Listing, Quote } from './market.ts'
 
 export type PaymentStatus = 'processing' | 'filled' | 'refunded' | 'pending_refund' | 'pending_fill' | 'skipped' | 'donated' | 'vaulted'
@@ -113,6 +127,9 @@ export type Store = {
   ackSend(id: string): Promise<void>
   abortWithdraw(id: string): Promise<string>
   vaultDesk(screenName: string, desk: string): Promise<number>
+  placeCash(person: Person, rooms: { desk: string; room: number; maxCents: number }[], now: number): Promise<CashHold>
+  noteCash(screenName: string, id: string): Promise<void>
+  releaseCash(screenName: string): Promise<void>
   leaders(): Promise<{ person: Person; realizedCents: number }[]>
   session(id: string): Promise<SessionUser | null>
   saveSession(session: SessionUser): Promise<void>
@@ -548,6 +565,19 @@ function storeFrom(
     },
     async vaultDesk(screenName, desk) {
       return deskVault(read(), screenName, desk)
+    },
+    async placeCash(person, rooms, now) {
+      let result: CashHold = { action: 'poor' }
+      await edit((doc) => {
+        result = placeCash(doc, person, rooms, now)
+      })
+      return result
+    },
+    async noteCash(screenName, id) {
+      await edit((doc) => noteCash(doc, screenName, id))
+    },
+    async releaseCash(screenName) {
+      await edit((doc) => releaseCash(doc, screenName))
     },
     async leaders() {
       if (read().meta['scores-ready'] !== '1') await edit((doc) => ensureScores(doc))
@@ -1206,6 +1236,19 @@ async function postgresStore(url: string): Promise<Store> {
         text = undoWithdraw(doc, id, Date.now())
       })
       return text
+    },
+    async placeCash(person, rooms, now) {
+      let result: CashHold = { action: 'poor' }
+      await editTrade((doc) => {
+        result = placeCash(doc, person, rooms, now)
+      })
+      return result
+    },
+    async noteCash(screenName, id) {
+      await editTrade((doc) => noteCash(doc, screenName, id))
+    },
+    async releaseCash(screenName) {
+      await editTrade((doc) => releaseCash(doc, screenName))
     },
     async vaultDesk(screenName, desk) {
       const rows = await sql<{ body: Vault }[]>`select body from larp_vaults`

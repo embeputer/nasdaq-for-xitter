@@ -3,6 +3,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { fileBuy, fileClose, samePerson, type Person } from './book.ts'
 import { getCandles, getQuotes, isInterval, parseId, searchMarket } from './market.ts'
 import { cashOut } from './close.ts'
+import { withdrawCash } from './withdraw.ts'
 import { payoutCents } from './payout.ts'
 import { adminNames, findPerson, fetchMe, loadDesks, readWallet, sendPayout, transferLimit } from './money.ts'
 import { runIngest } from './ingest.ts'
@@ -130,6 +131,10 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse): Prom
     }
     if (url.pathname === '/api/positions/close' && req.method === 'POST') {
       await closePosition(req, res)
+      return
+    }
+    if (url.pathname === '/api/vault/withdraw' && req.method === 'POST') {
+      await withdrawVault(req, res)
       return
     }
     if (url.pathname === '/api/cron/payments') {
@@ -334,6 +339,30 @@ async function closePosition(req: IncomingMessage, res: ServerResponse) {
     }
     if (position.venue === 'launch') await ledger.settleLaunch(position, result.cents)
     send(res, 200, { ok: true, cash: true, cents: result.cents, screenName: result.screenName })
+  })
+}
+
+async function withdrawVault(req: IncomingMessage, res: ServerResponse) {
+  const viewer = await viewerFrom(req)
+  if (!viewer) {
+    send(res, 401, { error: 'unauthorized', message: 'Log in to withdraw Cash.' })
+    return
+  }
+  const ledger = await openLedger()
+  await withCloseLock(`cash:${viewer.screenName.toLowerCase()}`, async () => {
+    const result = await withdrawCash({
+      ledger,
+      person: viewer,
+      desks: await loadDesks(),
+      wallet: (desk) => readWallet(desk.readToken),
+      pay: (desk, to, cents, note, key) => sendPayout(desk.writeToken, to, cents, note, key),
+      now: Date.now(),
+    })
+    if (!result.ok) {
+      send(res, result.status, { error: result.error, message: result.message })
+      return
+    }
+    send(res, 200, { ok: true, cents: result.cents, screenName: result.screenName, short: result.short })
   })
 }
 

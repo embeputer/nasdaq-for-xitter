@@ -14,6 +14,8 @@ export function Portfolio({
   quotes,
   desks,
   nqfxCents,
+  withdrawing = false,
+  onWithdraw,
   onClose,
   onOpened,
 }: {
@@ -23,6 +25,8 @@ export function Portfolio({
   quotes: Record<string, Quote>
   desks: string[]
   nqfxCents: number
+  withdrawing?: boolean
+  onWithdraw: () => void
   onClose: (position: Position, cash: boolean) => Promise<void>
   onOpened: () => void
 }) {
@@ -78,6 +82,9 @@ export function Portfolio({
         <Stat label="Account" value={`@${viewer.screenName}`} />
         <Stat label="Role" value={viewer.admin ? 'Admin' : 'Member'} />
       </div>
+      <button type="button" className="withdraw" disabled={busy || withdrawing} onClick={onWithdraw}>
+        {nqfxCents >= 100 ? `Withdraw ${formatUsd(nqfxCents / 100)}` : 'Withdraw'}
+      </button>
       {viewer.admin ? <AdminComposer onOpened={onOpened} /> : null}
       <section className="holdings">
         <h2>{viewer.admin ? 'Book' : 'Positions'}</h2>

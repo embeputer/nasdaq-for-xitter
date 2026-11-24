@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { fileBuy, fileClose, samePerson, type Fill, type Person, type Position } from './book.ts'
 import { REPLIES, retrySkippedAmount, type Command } from './commands.ts'
 import { planBuy, planSell, planSpend, type Launch } from './launch.ts'
@@ -80,6 +81,121 @@ export function undoWithdraw(doc: TradeDoc, id: string, now: number): string {
   addVault(doc, mention.person, mention.desk, mention.cents)
   doc.mentions[id] = { ...mention, status: 'reply', reply: REPLIES.short, updatedAt: now }
   return REPLIES.short
+}
+
+export type CashTransfer = { desk: string; cents: number; id: string; parts: number[]; sent: number }
+
+export type CashHold = { action: 'send'; transfers: CashTransfer[] } | { action: 'poor' | 'short' | 'bad' }
+
+export function cashMarker(screenName: string): string {
+  return `cash-out:${screenName.trim().replace(/^@/, '').toLowerCase()}`
+}
+
+export function placeCash(
+  doc: TradeDoc,
+  person: Person,
+  rooms: { desk: string; room: number; maxCents: number }[],
+  now: number,
+): CashHold {
+  const name = person.screenName.trim().replace(/^@/, '').toLowerCase()
+  const key = cashMarker(name)
+  const saved = readCash(doc.meta[key])
+  if (saved === 'bad') return { action: 'bad' }
+  if (saved) return { action: 'send', transfers: saved }
+  const total = Object.values(doc.vaults).reduce(
+    (sum, vault) => (vault.person.screenName.toLowerCase() === name ? sum + vault.cents : sum),
+    0,
+  )
+  if (total < 100) return { action: 'poor' }
+  const plans: { desk: string; cents: number; parts: number[] }[] = []
+  for (const room of rooms) {
+    const cents = deskVault(doc, name, room.desk)
+    if (cents < 1 || room.room < cents) continue
+    plans.push({ desk: room.desk, cents, parts: chunkCents(cents, room.maxCents) })
+  }
+  if (plans.reduce((sum, plan) => sum + plan.cents, 0) < 100) return { action: 'short' }
+  const transfers: CashTransfer[] = []
+  const taken: { desk: string; cents: number }[] = []
+  for (const [index, plan] of plans.entries()) {
+    if (!takeVault(doc, person, plan.desk, plan.cents)) {
+      for (const row of taken) addVault(doc, person, row.desk, row.cents)
+      return { action: 'poor' }
+    }
+    taken.push({ desk: plan.desk, cents: plan.cents })
+    transfers.push({
+      desk: deskKey(plan.desk),
+      cents: plan.cents,
+      id: `c${createHash('sha256').update(`${name}:${plan.desk}:${now}:${index}`).digest('hex').slice(0, 20)}`,
+      parts: plan.parts,
+      sent: 0,
+    })
+  }
+  doc.meta[key] = JSON.stringify(transfers)
+  return { action: 'send', transfers }
+}
+
+export function noteCash(doc: TradeDoc, screenName: string, id: string): void {
+  const key = cashMarker(screenName)
+  const saved = readCash(doc.meta[key])
+  if (!saved || saved === 'bad') return
+  const row = saved.find((item) => item.id === id)
+  if (!row || row.sent >= row.parts.length) return
+  row.sent += 1
+  const pending = saved.filter((item) => item.sent < item.parts.length)
+  if (pending.length === 0) delete doc.meta[key]
+  else doc.meta[key] = JSON.stringify(pending)
+}
+
+export function releaseCash(doc: TradeDoc, screenName: string): void {
+  const name = screenName.trim().replace(/^@/, '').toLowerCase()
+  const key = cashMarker(name)
+  const saved = readCash(doc.meta[key])
+  if (!saved || saved === 'bad') return
+  const person = { id: '', screenName: name, name, avatarUrl: null }
+  for (const row of saved) {
+    if (row.sent === 0) addVault(doc, person, row.desk, row.cents)
+  }
+  const pending = saved.filter((row) => row.sent > 0 && row.sent < row.parts.length)
+  if (pending.length === 0) delete doc.meta[key]
+  else doc.meta[key] = JSON.stringify(pending)
+}
+
+function chunkCents(cents: number, max: number): number[] {
+  const size = max > 0 ? max : 100_000
+  const parts: number[] = []
+  let left = cents
+  while (left > 0) {
+    const part = Math.min(left, size)
+    parts.push(part)
+    left -= part
+  }
+  return parts
+}
+
+function readCash(value: string | undefined): CashTransfer[] | null | 'bad' {
+  if (!value) return null
+  try {
+    const parsed = JSON.parse(value) as unknown
+    if (!Array.isArray(parsed) || parsed.length === 0) return 'bad'
+    const transfers: CashTransfer[] = []
+    for (const item of parsed) {
+      if (!item || typeof item !== 'object') return 'bad'
+      const row = item as Record<string, unknown>
+      const desk = typeof row.desk === 'string' ? row.desk : ''
+      const id = typeof row.id === 'string' ? row.id : ''
+      const cents = row.cents
+      const sent = row.sent
+      const parts = row.parts
+      if (!desk || !id || typeof cents !== 'number' || !Number.isSafeInteger(cents) || cents < 1) return 'bad'
+      if (typeof sent !== 'number' || !Number.isSafeInteger(sent) || sent < 0) return 'bad'
+      if (!Array.isArray(parts) || parts.some((part) => typeof part !== 'number' || !Number.isSafeInteger(part) || part < 1)) return 'bad'
+      if (parts.reduce((sum, part) => sum + part, 0) !== cents || sent > parts.length) return 'bad'
+      transfers.push({ desk, cents, id, parts: parts as number[], sent })
+    }
+    return transfers
+  } catch {
+    return 'bad'
+  }
 }
 
 export function ensureScores(doc: TradeDoc): void {
