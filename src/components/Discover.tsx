@@ -1,8 +1,26 @@
+import { useState } from 'react'
 import { formatPct, formatPrice, formatUsd, pnlClass } from '../lib/format'
 import { marketValue, openPnl } from '../lib/account'
 import type { Candle, Instrument, Position, Quote } from '../types'
 import type { Viewer } from '../lib/api'
 import { ChartPane } from './ChartPane'
+
+export function positionGroups(positions: Position[]): { screenName: string; positions: Position[] }[] {
+  const rows = new Map<string, Position[]>()
+  const label = new Map<string, string>()
+  for (const position of positions) {
+    const key = position.person.screenName.toLowerCase()
+    const group = rows.get(key)
+    if (group) group.push(position)
+    else {
+      rows.set(key, [position])
+      label.set(key, position.person.screenName)
+    }
+  }
+  return [...rows.keys()]
+    .sort((a, b) => a.localeCompare(b))
+    .map((key) => ({ screenName: label.get(key) ?? key, positions: rows.get(key) ?? [] }))
+}
 
 export function Discover({
   positions,
@@ -33,36 +51,64 @@ export function Discover({
       }
     : null
   const quote = instrument ? (quotes[instrument.id] ?? null) : null
+  const [openNames, setOpenNames] = useState<Record<string, boolean>>({})
+  const groups = positionGroups(positions)
   return (
     <div className="terminal">
       <aside className="book">
         <p className="feed-kicker">Discover</p>
         <ul className="names">
-          {positions.map((position) => {
-            const mark = quotes[`${position.venue}:${position.symbol}`]
-            const gain = openPnl(position, mark?.price)
-            const mine = viewer ? viewer.screenName.toLowerCase() === position.person.screenName.toLowerCase() : false
+          {groups.map((group) => {
+            const key = group.screenName.toLowerCase()
+            const open = openNames[key] === true
+            const mine = viewer ? viewer.screenName.toLowerCase() === key : false
             return (
-              <li key={position.id}>
+              <li key={key} className="person-group">
                 <button
                   type="button"
-                  className={position.id === selected?.id ? 'name selected' : 'name'}
-                  onClick={() => onSelect(position)}
+                  className="group-toggle"
+                  aria-expanded={open}
+                  onClick={() => setOpenNames((current) => ({ ...current, [key]: !current[key] }))}
                 >
-                  <span>
+                  <span className="group-mark">
+                    <span className="group-chev" aria-hidden="true">
+                      {open ? '▾' : '▸'}
+                    </span>
                     <strong>
-                      @{position.person.screenName}
+                      @{group.screenName}
                       {mine ? <i className="yours">Yours</i> : null}
                     </strong>
-                    <em>
-                      {position.label} · {position.name}
-                    </em>
                   </span>
-                  <span className="name-px">
-                    <strong>{formatUsd(marketValue(position, mark?.price))}</strong>
-                    <em className={pnlClass(gain)}>{mark && position.avgPrice > 0 ? formatPct(((mark.price - position.avgPrice) / position.avgPrice) * 100) : '—'}</em>
-                  </span>
+                  <span className="group-count">{group.positions.length}</span>
                 </button>
+                {open ? (
+                  <ul className="group-positions">
+                    {group.positions.map((position) => {
+                      const mark = quotes[`${position.venue}:${position.symbol}`]
+                      const gain = openPnl(position, mark?.price)
+                      return (
+                        <li key={position.id}>
+                          <button
+                            type="button"
+                            className={position.id === selected?.id ? 'name selected' : 'name'}
+                            onClick={() => onSelect(position)}
+                          >
+                            <span>
+                              <strong>{position.label}</strong>
+                              <em>{position.name}</em>
+                            </span>
+                            <span className="name-px">
+                              <strong>{formatUsd(marketValue(position, mark?.price))}</strong>
+                              <em className={pnlClass(gain)}>
+                                {mark && position.avgPrice > 0 ? formatPct(((mark.price - position.avgPrice) / position.avgPrice) * 100) : '—'}
+                              </em>
+                            </span>
+                          </button>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                ) : null}
               </li>
             )
           })}
@@ -123,7 +169,7 @@ export function Discover({
               </p>
             </div>
             <div className="chart-wrap">
-              <ChartPane candles={candles} quote={quote} />
+              <ChartPane candles={candles} quote={quote} seriesId={`${selected.venue}:${selected.symbol}`} />
               {chartError ? <p className="chart-error">{chartError}</p> : null}
               {candles.length === 0 && !chartError ? <p className="chart-error">Loading the chart…</p> : null}
             </div>

@@ -1,7 +1,7 @@
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import { Discover, shortName } from './Discover.tsx'
+import { Discover, positionGroups, shortName } from './Discover.tsx'
 import { Leaderboard } from './Leaderboard.tsx'
 import type { Position } from '../types'
 
@@ -44,6 +44,11 @@ describe('chart heading', () => {
     expect(html).toContain('Anthropic · ANT')
     expect(html).toContain('Anthropic, PBC Class A Common Stock')
     expect(html).toContain('@z1xus')
+    expect(html).toContain('aria-expanded="false"')
+    const aside = html.slice(html.indexOf('class="book"'), html.indexOf('class="stage"'))
+    expect(aside).toContain('@z1xus')
+    expect(aside).not.toContain('class="name"')
+    expect(aside).not.toContain('class="name ')
     expect(html).not.toContain('>@z1xus</a></h2>')
     const card = html.slice(html.indexOf('position-card'))
     expect(card).toContain('Username')
@@ -94,6 +99,38 @@ describe('chart heading', () => {
     expect(nameLine).toContain('@Rayman')
     expect(html).toContain('Rayman · xitRAYMAN')
     expect(html).not.toContain('names board')
+  })
+})
+
+describe('discover groups', () => {
+  it('groups positions by account and starts collapsed', () => {
+    const other: Position = {
+      ...ant,
+      id: 'pos:stock:NVDA:ada',
+      symbol: 'NVDA',
+      name: 'NVIDIA',
+      label: 'NVDA',
+      person: { id: '2', screenName: 'Ada', name: 'Ada', avatarUrl: null },
+    }
+    expect(positionGroups([ant, other]).map((group) => group.screenName)).toEqual(['Ada', 'z1xus'])
+    const html = renderToStaticMarkup(
+      createElement(Discover, {
+        positions: [ant, other],
+        quotes: {},
+        viewer: { screenName: 'z1xus', name: 'z1xus', avatarUrl: null, admin: false },
+        desks: ['nasdaq'],
+        selected: null,
+        onSelect: () => undefined,
+        candles: [],
+        chartError: null,
+      }),
+    )
+    const aside = html.slice(html.indexOf('class="book"'), html.indexOf('class="stage"'))
+    expect(aside.indexOf('@Ada')).toBeLessThan(aside.indexOf('@z1xus'))
+    expect(aside).toContain('Yours')
+    expect(aside.match(/aria-expanded="false"/g)?.length).toBe(2)
+    expect(aside).not.toContain('>NVDA<')
+    expect(aside).not.toContain('>ANT<')
   })
 })
 
