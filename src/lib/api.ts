@@ -7,15 +7,12 @@ export type Viewer = {
   admin: boolean
 }
 
-export type ScoreRow = { person: Person; realizedCents: number }
-
 export type Book = {
   positions: Position[]
   fills: Fill[]
   desks: string[]
   durable: boolean
   nqfxCents: number
-  scores: ScoreRow[]
 }
 
 export async function fetchQuotes(ids: string[]): Promise<Quote[]> {
@@ -43,8 +40,7 @@ export async function searchMarket(venue: Venue, query: string): Promise<Instrum
 export async function fetchBook(): Promise<Book> {
   const res = await fetch('/api/book')
   if (!res.ok) throw new Error('Could not load the book.')
-  const body = (await res.json()) as Book
-  return { ...body, scores: body.scores ?? [] }
+  return (await res.json()) as Book
 }
 
 export async function fetchSession(): Promise<Viewer | null> {

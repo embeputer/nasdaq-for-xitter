@@ -240,9 +240,6 @@ button:focus-visible {
 .name strong { font-weight: 700; font-size: 15px; }
 .name em { font-style: normal; color: var(--dim); font-size: 13px; }
 .name-px { text-align: right; font-variant-numeric: tabular-nums; }
-.board a.name { color: inherit; text-decoration: none; }
-.board .up { color: #1faf4a; }
-.board .down { color: #f4212e; }
 .up { color: var(--up); }
 .down { color: var(--down); }
 .hint { color: var(--dim); font-size: 15px; line-height: 1.35; }

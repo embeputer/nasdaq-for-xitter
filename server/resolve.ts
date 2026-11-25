@@ -214,23 +214,32 @@ export async function resolveNote(
   const raw = note.trim()
   if (!raw || isRefundNote(raw)) return null
   const queries = queriesFromNote(raw)
-  // A cashtag skips the coin check. The stock it finds can still be a coin trust.
-  if (!queries.some((item) => item.venue === 'stock') && (await restricted(raw))) return { restricted: true }
   for (const item of queries) {
     if (item.venue === 'launch') {
       const found = await findLaunch(item.query)
       if (found) return found
       continue
     }
-    if (item.venue !== 'stock' && (await restricted(item.query))) return { restricted: true }
-    const found = await resolveQuery(item, search)
-    if (found?.venue === 'stock' && isCryptoStock(found.name, found.symbol)) return { restricted: true, stock: true }
+    const explicitCrypto = item.venue === 'crypto' || (!item.venue && /usdt$|usdc$/i.test(item.query))
+    if (explicitCrypto && (await restricted(item.query))) return { restricted: true }
+    const found = await resolveQuery(item, search, restricted)
+    if (found?.venue === 'stock' && isCryptoStock(found.name, found.symbol)) {
+      if (item.venue !== 'stock' && (await restricted(item.query))) return { restricted: true }
+      return { restricted: true, stock: true }
+    }
     if (found) return found
+    if (item.venue !== 'stock' && (await restricted(item.query))) return { restricted: true }
   }
+  // Catch multi-word restricted coin names (e.g. "SHIBA INU") when no token resolved.
+  if (!queries.some((item) => item.venue === 'stock') && (await restricted(raw))) return { restricted: true }
   return null
 }
 
-async function resolveQuery(item: NoteQuery, search: Search): Promise<Listing | null> {
+async function resolveQuery(
+  item: NoteQuery,
+  search: Search,
+  restricted: (query: string) => Promise<boolean> | boolean,
+): Promise<Listing | null> {
   if (item.venue) {
     const hits = await search(item.venue, item.query)
     return pickListing(hits, item.query, item.venue)
@@ -241,7 +250,8 @@ async function resolveQuery(item: NoteQuery, search: Search): Promise<Listing | 
   }
   const [stocks, cryptos] = await Promise.all([search('stock', item.query), search('crypto', item.query)])
   const stockHit = pickListing(stocks, item.query, 'stock')
-  const cryptoHit = pickListing(cryptos, item.query, 'crypto')
+  const rawCryptoHit = pickListing(cryptos, item.query, 'crypto')
+  const cryptoHit = rawCryptoHit && !(await restricted(item.query)) ? rawCryptoHit : null
   if (cryptoHit && isCryptoTicker(cryptoHit, item.query)) return cryptoHit
   const name = item.query.trim().toLowerCase()
   if (cryptoHit && cryptoHit.name.toLowerCase() === name && stockHit?.name.toLowerCase() !== name) return cryptoHit

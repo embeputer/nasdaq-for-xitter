@@ -99,6 +99,7 @@ describe('ticker notes', () => {
       { id: 'stock:ABTC', venue: 'stock', symbol: 'ABTC', label: 'ABTC', name: 'American Bitcoin Corp. Class A Common Stock' },
       { id: 'stock:BIXI', venue: 'stock', symbol: 'BIXI', label: 'BIXI', name: 'Bitcoin Infrastructure Acquisition Corp Ltd.' },
       { id: 'stock:MSTR', venue: 'stock', symbol: 'MSTR', label: 'MSTR', name: 'Strategy Inc Common Stock Class A' },
+      { id: 'stock:DASH', venue: 'stock', symbol: 'DASH', label: 'DASH', name: 'DoorDash, Inc.' },
       { id: 'crypto:BTCUSDT', venue: 'crypto', symbol: 'BTCUSDT', label: 'BTC', name: 'Bitcoin' },
       { id: 'crypto:ETHUSDT', venue: 'crypto', symbol: 'ETHUSDT', label: 'ETH', name: 'Ethereum' },
       { id: 'crypto:SOLUSDT', venue: 'crypto', symbol: 'SOLUSDT', label: 'SOL', name: 'Solana' },
@@ -108,14 +109,15 @@ describe('ticker notes', () => {
     ]
     const search = async (venue: Listing['venue'], query: string) =>
       listings.filter((item) => item.venue === venue && `${item.symbol} ${item.name} ${item.label}`.toLowerCase().includes(query.toLowerCase()))
-    const memes = new Set(['doge', 'dogecoin', 'pepe', 'shiba inu'])
-    const restricted = (query: string) => memes.has(query.trim().toLowerCase())
+    const restrictedCoins = new Set(['doge', 'dogecoin', 'pepe', 'shiba inu', 'sui', 'dash'])
+    const restricted = (query: string) => restrictedCoins.has(query.trim().toLowerCase())
     const id = async (note: string) => {
       const hit = await resolveNote(note, search, async () => null, restricted)
       return hit && 'id' in hit ? hit.id : null
     }
     expect(await id('oracle')).toBe('stock:ORCL')
     expect(await id('NVDA')).toBe('stock:NVDA')
+    expect(await id('DASH')).toBe('stock:DASH')
     expect(await id('BTC')).toBe('crypto:BTCUSDT')
     expect(await id('ETH')).toBe('crypto:ETHUSDT')
     expect(await id('sol')).toBe('crypto:SOLUSDT')
@@ -123,6 +125,8 @@ describe('ticker notes', () => {
     expect(isRestricted(await resolveNote('Dogecoin', search, async () => null, restricted))).toBe(true)
     expect(isRestricted(await resolveNote('please DOGE', search, async () => null, restricted))).toBe(true)
     expect(isRestricted(await resolveNote('crypto:DOGE', search, async () => null, restricted))).toBe(true)
+    expect(isRestricted(await resolveNote('SUI', search, async () => null, restricted))).toBe(true)
+    expect(isRestricted(await resolveNote('crypto:DASH', search, async () => null, restricted))).toBe(true)
     expect(await id('XRP')).toBe('crypto:XRPUSDC')
     expect(await id('stock:NVDA')).toBe('stock:NVDA')
     expect(await id('COIN')).toBe('stock:COIN')

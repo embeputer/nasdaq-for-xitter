@@ -1,9 +1,24 @@
 import { describe, expect, it } from 'vitest'
-import { isTokenizedEquityBase, mentionsMeme, readCoinBook, spotListings, type CoinProduct } from './market.ts'
+import {
+  ALLOWED_CRYPTO,
+  isTokenizedEquityBase,
+  mentionsMeme,
+  mentionsRestrictedCoin,
+  readCoinBook,
+  spotListings,
+  type CoinProduct,
+} from './market.ts'
 
 const products: CoinProduct[] = [
   { b: 'BTC', q: 'USDT', an: 'Bitcoin', tags: ['Payments', 'mining-zone'] },
+  { b: 'ETH', q: 'USDT', an: 'Ethereum', tags: ['Layer1_Layer2'] },
   { b: 'SOL', q: 'USDT', an: 'Solana', tags: ['Layer1_Layer2', 'Seed'] },
+  { b: 'BNB', q: 'USDT', an: 'BNB', tags: ['Layer1_Layer2'] },
+  { b: 'XRP', q: 'USDT', an: 'XRP', tags: ['Payments'] },
+  { b: 'ADA', q: 'USDT', an: 'Cardano', tags: ['Layer1_Layer2'] },
+  { b: 'LTC', q: 'USDT', an: 'Litecoin', tags: ['Payments', 'mining-zone'] },
+  { b: 'AVAX', q: 'USDT', an: 'Avalanche', tags: ['Layer1_Layer2'] },
+  { b: 'LINK', q: 'USDT', an: 'Chainlink', tags: ['Defi'] },
   { b: 'PEPE', q: 'EUR', an: 'PEPE', tags: ['Meme', 'innovation-zone'] },
   { b: 'PEPE', q: 'USDT', an: 'Pepe', tags: ['Meme', 'innovation-zone'] },
   { b: 'WIF', q: 'EUR', an: 'WIF', tags: ['Meme'] },
@@ -13,10 +28,12 @@ const products: CoinProduct[] = [
   { b: 'FLOKI', q: 'USDT', an: 'FLOKI', tags: ['Meme', 'Seed'] },
   { b: 'WIF', q: 'USDT', an: 'Dogwifhat', tags: ['Monitoring', 'Seed', 'Meme'] },
   { b: 'NEW', q: 'USDT', an: 'New Coin', tags: ['innovation-zone', 'Seed'] },
+  { b: 'SUI', q: 'USDT', an: 'Sui', tags: ['Layer1_Layer2'] },
 ]
 
-describe('meme coins', () => {
-  it('drops a Binance Meme tag from both quotes and keeps everything else', () => {
+describe('restricted crypto allowlist', () => {
+  it('only lists the allowed major coins and marks other Binance coins restricted', () => {
+    expect([...ALLOWED_CRYPTO]).toEqual(['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'ADA', 'LTC', 'AVAX', 'LINK'])
     const book = readCoinBook(products)
     expect(isTokenizedEquityBase('SHIB')).toBe(false)
     expect(book.memes.get('DOGE')).toBe('Dogecoin')
@@ -30,7 +47,15 @@ describe('meme coins', () => {
     const listed = spotListings(
       [
         { symbol: 'BTCUSDT', status: 'TRADING', baseAsset: 'BTC', quoteAsset: 'USDT' },
+        { symbol: 'ETHUSDC', status: 'TRADING', baseAsset: 'ETH', quoteAsset: 'USDC' },
         { symbol: 'SOLUSDT', status: 'TRADING', baseAsset: 'SOL', quoteAsset: 'USDT' },
+        { symbol: 'BNBUSDT', status: 'TRADING', baseAsset: 'BNB', quoteAsset: 'USDT' },
+        { symbol: 'XRPUSDT', status: 'TRADING', baseAsset: 'XRP', quoteAsset: 'USDT' },
+        { symbol: 'ADAUSDT', status: 'TRADING', baseAsset: 'ADA', quoteAsset: 'USDT' },
+        { symbol: 'LTCUSDT', status: 'TRADING', baseAsset: 'LTC', quoteAsset: 'USDT' },
+        { symbol: 'AVAXUSDT', status: 'TRADING', baseAsset: 'AVAX', quoteAsset: 'USDT' },
+        { symbol: 'LINKUSDT', status: 'TRADING', baseAsset: 'LINK', quoteAsset: 'USDT' },
+        { symbol: 'SUIUSDT', status: 'TRADING', baseAsset: 'SUI', quoteAsset: 'USDT' },
         { symbol: 'NEWUSDT', status: 'TRADING', baseAsset: 'NEW', quoteAsset: 'USDT' },
         { symbol: 'DOGEUSDT', status: 'TRADING', baseAsset: 'DOGE', quoteAsset: 'USDT' },
         { symbol: 'DOGEUSDC', status: 'TRADING', baseAsset: 'DOGE', quoteAsset: 'USDC' },
@@ -46,21 +71,36 @@ describe('meme coins', () => {
       ],
       book,
     )
-    expect(listed.map((item) => item.symbol)).toEqual(['BTCUSDT', 'NEWUSDT', 'SOLUSDT'])
+    expect(listed.map((item) => item.symbol)).toEqual([
+      'ADAUSDT',
+      'AVAXUSDT',
+      'BNBUSDT',
+      'BTCUSDT',
+      'ETHUSDC',
+      'LINKUSDT',
+      'LTCUSDT',
+      'SOLUSDT',
+      'XRPUSDT',
+    ])
     expect(listed.find((item) => item.symbol === 'BTCUSDT')?.name).toBe('Bitcoin')
     expect(mentionsMeme(book, 'DOGE')).toBe(true)
-    expect(mentionsMeme(book, 'dogeusdt')).toBe(true)
-    expect(mentionsMeme(book, 'DOGE-USDC')).toBe(true)
-    expect(mentionsMeme(book, 'Dogecoin')).toBe(true)
-    expect(mentionsMeme(book, 'Pepe')).toBe(true)
-    expect(mentionsMeme(book, 'Dogwifhat')).toBe(true)
-    expect(mentionsMeme(book, 'please buy SHIBA INU today')).toBe(true)
-    expect(mentionsMeme(book, '1000SATS')).toBe(true)
-    expect(mentionsMeme(book, 'FLOKI')).toBe(true)
-    expect(mentionsMeme(book, 'BTC')).toBe(false)
-    expect(mentionsMeme(book, 'Bitcoin')).toBe(false)
-    expect(mentionsMeme(book, '$DOGE')).toBe(false)
-    expect(mentionsMeme(book, 'SOL')).toBe(false)
-    expect(mentionsMeme(book, 'NEW')).toBe(false)
+    expect(mentionsRestrictedCoin(book, 'DOGE')).toBe(true)
+    expect(mentionsRestrictedCoin(book, 'dogeusdt')).toBe(true)
+    expect(mentionsRestrictedCoin(book, 'DOGE-USDC')).toBe(true)
+    expect(mentionsRestrictedCoin(book, 'Dogecoin')).toBe(true)
+    expect(mentionsRestrictedCoin(book, 'Pepe')).toBe(true)
+    expect(mentionsRestrictedCoin(book, 'Dogwifhat')).toBe(true)
+    expect(mentionsRestrictedCoin(book, 'please buy SHIBA INU today')).toBe(true)
+    expect(mentionsRestrictedCoin(book, '1000SATS')).toBe(true)
+    expect(mentionsRestrictedCoin(book, 'FLOKI')).toBe(true)
+    expect(mentionsRestrictedCoin(book, 'SUI')).toBe(true)
+    expect(mentionsRestrictedCoin(book, 'NEW')).toBe(true)
+    expect(mentionsRestrictedCoin(book, 'New Coin')).toBe(true)
+    expect(mentionsRestrictedCoin(book, 'BTC')).toBe(false)
+    expect(mentionsRestrictedCoin(book, 'Bitcoin')).toBe(false)
+    expect(mentionsRestrictedCoin(book, '$DOGE')).toBe(false)
+    expect(mentionsRestrictedCoin(book, 'SOL')).toBe(false)
+    expect(mentionsRestrictedCoin(book, 'LINK')).toBe(false)
+    expect(mentionsRestrictedCoin(book, 'NVDA')).toBe(false)
   })
 })

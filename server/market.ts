@@ -763,11 +763,14 @@ export function isTokenizedEquityBase(base: string): boolean {
   return /^[A-Z]{1,5}(?:B|X|ON)$/.test(asset)
 }
 
+export const ALLOWED_CRYPTO = new Set(['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'ADA', 'LTC', 'AVAX', 'LINK'])
+
 export type CoinProduct = { b?: string; q?: string; an?: string; tags?: unknown }
 
 export type CoinBook = {
   names: Map<string, string>
   memes: Map<string, string>
+  restricted: Map<string, string>
 }
 
 type SpotRow = { symbol?: string; status?: string; baseAsset?: string; quoteAsset?: string }
@@ -790,36 +793,40 @@ function displayName(name: string, base: string): string {
 export function readCoinBook(rows: CoinProduct[]): CoinBook {
   const names = new Map<string, string>()
   const memes = new Map<string, string>()
+  const restricted = new Map<string, string>()
   for (const row of rows) {
     const base = row.b?.trim().toUpperCase()
     if (!base) continue
     const named = displayName(row.an ?? '', base)
     if (row.q === 'USDT' && named) names.set(base, named)
+    if (!ALLOWED_CRYPTO.has(base) && !isTokenizedEquityBase(base)) {
+      const current = restricted.get(base)
+      if (!current || current.toUpperCase() === base) restricted.set(base, named || current || base)
+    }
     if (!memeTagged(row.tags)) continue
     const current = memes.get(base)
     if (!current || current.toUpperCase() === base) memes.set(base, named || current || base)
   }
-  return { names, memes }
+  return { names, memes, restricted }
 }
 
-export function isMemeQuery(book: CoinBook, query: string): boolean {
+function matchesCoinMap(map: Map<string, string>, query: string): boolean {
   const raw = query.trim()
   if (!raw) return false
   const upper = raw.toUpperCase()
   const base = spotBase(raw)
-  if ((base && book.memes.has(base)) || book.memes.has(upper)) return true
+  if ((base && map.has(base)) || map.has(upper)) return true
   const lower = raw.toLowerCase()
-  for (const name of book.memes.values()) {
+  for (const name of map.values()) {
     if (name.toLowerCase() === lower) return true
   }
   return false
 }
 
-/** A multi-word Binance name counts when the note says the whole name. */
-export function mentionsMeme(book: CoinBook, text: string): boolean {
-  if (isMemeQuery(book, text)) return true
+function mentionsCoinMap(map: Map<string, string>, text: string): boolean {
+  if (matchesCoinMap(map, text)) return true
   const padded = ` ${text.toLowerCase()} `
-  for (const name of book.memes.values()) {
+  for (const name of map.values()) {
     if (!name.includes(' ')) continue
     const needle = name.toLowerCase()
     if (needle.length < 4) continue
@@ -828,14 +835,28 @@ export function mentionsMeme(book: CoinBook, text: string): boolean {
   return false
 }
 
+export function isMemeQuery(book: CoinBook, query: string): boolean {
+  return matchesCoinMap(book.memes, query)
+}
+
+/** A multi-word Binance name counts when the note says the whole name. */
+export function mentionsMeme(book: CoinBook, text: string): boolean {
+  return mentionsCoinMap(book.memes, text)
+}
+
+export function mentionsRestrictedCoin(book: CoinBook, text: string): boolean {
+  const base = spotBase(text)
+  if (ALLOWED_CRYPTO.has(base)) return false
+  return mentionsCoinMap(book.restricted, text)
+}
+
 export function spotListings(rows: SpotRow[], book: CoinBook): Listing[] {
   return rows
     .flatMap((row) => {
       if (row.status !== 'TRADING' || !row.symbol || !row.baseAsset) return []
       if (row.quoteAsset !== 'USDT' && row.quoteAsset !== 'USDC') return []
       const base = row.baseAsset.toUpperCase()
-      // Binance's Meme tag removes the base from both quotes. Seed alone stays.
-      if (isTokenizedEquityBase(base) || book.memes.has(base)) return []
+      if (!ALLOWED_CRYPTO.has(base) || isTokenizedEquityBase(base) || book.memes.has(base)) return []
       const label = row.quoteAsset === 'USDC' ? `${row.baseAsset}-USDC` : row.baseAsset
       const name = book.names.get(base) || row.baseAsset
       return [listing('crypto', row.symbol, name, label)]
@@ -856,8 +877,9 @@ async function coinBook(): Promise<CoinBook> {
 }
 
 export async function isRestrictedCoin(query: string): Promise<boolean> {
+  if (ALLOWED_CRYPTO.has(spotBase(query))) return false
   try {
-    return mentionsMeme(await coinBook(), query)
+    return mentionsRestrictedCoin(await coinBook(), query)
   } catch {
     return false
   }

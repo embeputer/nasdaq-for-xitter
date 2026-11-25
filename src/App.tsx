@@ -6,7 +6,6 @@ import { equitySession, sessionFromMarketState, shownSession, type EquitySession
 import { noisePosition, NOISE_QUOTE } from './lib/noise'
 import { CRYPTO_POLL_MS, STOCK_POLL_MS, candlePollMs, quoteGroups } from './lib/poll'
 import { Discover } from './components/Discover'
-import { Leaderboard } from './components/Leaderboard'
 import { SessionRibbon } from './components/SessionRibbon'
 import { LaunchForm } from './components/LaunchForm'
 import { WithdrawForm } from './components/WithdrawForm'
@@ -50,16 +49,15 @@ function pollQuotes(ids: string[], ms: number, setQuotes: (update: (current: Rec
   }
 }
 
-function viewFromLocation(): 'discover' | 'pnl' | 'portfolio' {
+function viewFromLocation(): 'discover' | 'portfolio' {
   if (window.location.hash === '#portfolio') return 'portfolio'
-  if (window.location.hash === '#pnl') return 'pnl'
   return 'discover'
 }
 
 export default function App() {
-  const [view, setView] = useState<'discover' | 'pnl' | 'portfolio'>(viewFromLocation)
+  const [view, setView] = useState<'discover' | 'portfolio'>(viewFromLocation)
   const [viewer, setViewer] = useState<Viewer | null>(null)
-  const [book, setBook] = useState<Book>({ positions: [], fills: [], desks: [], durable: true, nqfxCents: 0, scores: [] })
+  const [book, setBook] = useState<Book>({ positions: [], fills: [], desks: [], durable: true, nqfxCents: 0 })
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [quotes, setQuotes] = useState<Record<string, Quote>>({})
   const [candles, setCandles] = useState<Candle[]>([])
@@ -76,7 +74,7 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    const hash = view === 'portfolio' ? '#portfolio' : view === 'pnl' ? '#pnl' : '#discover'
+    const hash = view === 'portfolio' ? '#portfolio' : '#discover'
     const next = `${window.location.pathname}${window.location.search}${hash}`
     if (`${window.location.pathname}${window.location.search}${window.location.hash}` !== next) {
       window.history.replaceState(null, '', next)
@@ -211,9 +209,6 @@ export default function App() {
           <button type="button" aria-current={view === 'discover' ? 'page' : undefined} onClick={() => setView('discover')}>
             Discover
           </button>
-          <button type="button" aria-current={view === 'pnl' ? 'page' : undefined} onClick={() => setView('pnl')}>
-            P&L
-          </button>
           <button type="button" aria-current={view === 'portfolio' ? 'page' : undefined} onClick={() => setView('portfolio')}>
             Portfolio
           </button>
@@ -293,8 +288,6 @@ export default function App() {
             })
           }}
         />
-      ) : view === 'pnl' ? (
-        <Leaderboard positions={book.positions} quotes={quotes} scores={book.scores} />
       ) : (
         <Portfolio
           viewer={viewer}

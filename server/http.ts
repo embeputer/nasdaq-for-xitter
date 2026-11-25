@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { fileBuy, fileClose, samePerson, type Person } from './book.ts'
-import { getCandles, getQuotes, isCryptoStock, isInterval, isRestrictedCoin, parseId, searchMarket } from './market.ts'
+import { ALLOWED_CRYPTO, getCandles, getQuotes, isCryptoStock, isInterval, isRestrictedCoin, parseId, searchMarket, spotBase } from './market.ts'
 import { cashOut } from './close.ts'
 import { withdrawCash } from './withdraw.ts'
 import { payoutCents } from './payout.ts'
@@ -133,7 +133,6 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse): Prom
         desks,
         durable: durableStorage(),
         nqfxCents: viewer ? await ledger.vaultCents(viewer.screenName) : 0,
-        scores: await ledger.leaders(),
       })
       return
     }
@@ -278,7 +277,7 @@ async function openPosition(req: IncomingMessage, res: ServerResponse) {
     send(res, 400, { error: 'closed', message: 'Perpetuals are closed.' })
     return
   }
-  if (parsed.venue === 'crypto' && (await isRestrictedCoin(parsed.symbol))) {
+  if (parsed.venue === 'crypto' && (!ALLOWED_CRYPTO.has(spotBase(parsed.symbol)) || (await isRestrictedCoin(parsed.symbol)))) {
     send(res, 400, { error: 'restricted', message: "That coin isn't available." })
     return
   }
