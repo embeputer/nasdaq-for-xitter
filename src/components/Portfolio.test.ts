@@ -18,7 +18,7 @@ function position(id: string, screenName: string, label: string): Position {
   }
 }
 
-const viewer = { id: '1', screenName: 'ember', name: 'Ember', avatarUrl: null, admin: false }
+const viewer = { id: '1', screenName: 'ember', name: 'Ember', avatarUrl: null, admin: false, moderator: false, compliant: true }
 
 describe('withdraw button', () => {
   it('shows Withdraw on a signed-in portfolio and hides it when logged out', () => {

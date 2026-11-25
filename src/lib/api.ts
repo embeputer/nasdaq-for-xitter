@@ -5,7 +5,26 @@ export type Viewer = {
   name: string
   avatarUrl: string | null
   admin: boolean
+  moderator: boolean
+  compliant: boolean
 }
+
+export type ModerationLaunch = {
+  symbol: string
+  label: string
+  name: string
+  creator: string
+  delisted: boolean
+}
+
+export type ModerationState = {
+  delistedLaunches: string[]
+  restrictedMarkets: string[]
+  restrictedUsers: string[]
+  launches: ModerationLaunch[]
+}
+
+export type ModerationKind = 'delist_launch' | 'restrict_market' | 'restrict_user'
 
 export type Book = {
   positions: Position[]
@@ -54,15 +73,50 @@ export async function logout(): Promise<void> {
   await fetch('/api/logout', { method: 'POST' })
 }
 
+export async function acceptDisclaimer(): Promise<Viewer | null> {
+  const res = await fetch('/api/disclaimer', { method: 'POST' })
+  if (!res.ok) throw new Error('Could not accept the disclaimer.')
+  const body = (await res.json()) as { user?: Viewer | null }
+  return body.user ?? null
+}
+
 export async function openFor(id: string, amount: number, screenName: string): Promise<string> {
   const res = await fetch('/api/positions/open', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ id, amount, screenName }),
   })
-  const body = (await res.json()) as { error?: string; screenName?: string }
-  if (!res.ok) throw new Error(body.error === 'no_person' ? 'Choose a person from Xitter.' : 'Could not open that position.')
+  const body = (await res.json()) as { error?: string; message?: string; screenName?: string }
+  if (!res.ok) throw new Error(body.error === 'no_person' ? 'Choose a person from Xitter.' : body.message || 'Could not open that position.')
   return body.screenName ?? screenName
+}
+
+export async function fetchModeration(): Promise<ModerationState> {
+  const res = await fetch('/api/moderation')
+  const body = (await res.json().catch(() => ({}))) as Partial<ModerationState> & { message?: string }
+  if (!res.ok) throw new Error(body.message || 'Could not load moderation controls.')
+  return {
+    delistedLaunches: body.delistedLaunches ?? [],
+    restrictedMarkets: body.restrictedMarkets ?? [],
+    restrictedUsers: body.restrictedUsers ?? [],
+    launches: body.launches ?? [],
+  }
+}
+
+export async function saveModeration(kind: ModerationKind, target: string, active: boolean): Promise<ModerationState> {
+  const res = await fetch('/api/moderation', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ kind, target, active }),
+  })
+  const body = (await res.json().catch(() => ({}))) as Partial<ModerationState> & { message?: string }
+  if (!res.ok) throw new Error(body.message || 'Could not update moderation.')
+  return {
+    delistedLaunches: body.delistedLaunches ?? [],
+    restrictedMarkets: body.restrictedMarkets ?? [],
+    restrictedUsers: body.restrictedUsers ?? [],
+    launches: body.launches ?? [],
+  }
 }
 
 export async function launchFor(

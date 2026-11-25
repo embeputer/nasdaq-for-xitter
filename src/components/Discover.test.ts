@@ -130,7 +130,7 @@ describe('chart heading', () => {
       createElement(Discover, {
         positions: [rayman],
         quotes: { 'launch:RAYMAN': quote },
-        viewer: { screenName: '@rayman', name: 'Rayman', avatarUrl: null, admin: false },
+        viewer: { screenName: '@rayman', name: 'Rayman', avatarUrl: null, admin: false, moderator: false, compliant: true },
         desks: ['nasdaq'],
         selected: rayman,
         onSelect: () => undefined,
@@ -144,7 +144,7 @@ describe('chart heading', () => {
       createElement(Discover, {
         positions: [rayman],
         quotes: { 'launch:RAYMAN': { ...quote, logo: undefined } },
-        viewer: { screenName: 'toejoke', name: 'toejoke', avatarUrl: null, admin: false },
+        viewer: { screenName: 'toejoke', name: 'toejoke', avatarUrl: null, admin: false, moderator: false, compliant: true },
         desks: ['nasdaq'],
         selected: rayman,
         onSelect: () => undefined,
@@ -158,7 +158,7 @@ describe('chart heading', () => {
       createElement(Discover, {
         positions: [ant],
         quotes: {},
-        viewer: { screenName: 'z1xus', name: 'z1xus', avatarUrl: null, admin: false },
+        viewer: { screenName: 'z1xus', name: 'z1xus', avatarUrl: null, admin: false, moderator: false, compliant: true },
         desks: ['nasdaq'],
         selected: ant,
         onSelect: () => undefined,
@@ -220,7 +220,7 @@ describe('discover groups', () => {
       createElement(Discover, {
         positions: [ant, other],
         quotes: {},
-        viewer: { screenName: 'z1xus', name: 'z1xus', avatarUrl: null, admin: false },
+        viewer: { screenName: 'z1xus', name: 'z1xus', avatarUrl: null, admin: false, moderator: false, compliant: true },
         desks: ['nasdaq'],
         selected: null,
         onSelect: () => undefined,

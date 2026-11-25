@@ -1,6 +1,8 @@
 import { samePerson, type Person, type Position } from './book.ts'
 import { parseCommand, retrySkippedAmount, WITHDRAW_NOTE, withdrawKey } from './commands.ts'
 import { getQuotes, isRestrictedCoin, searchMarket, spotBase, type Listing } from './market.ts'
+import { isMarketRestricted, isUserRestricted } from './moderation.ts'
+import { DISCLAIMER_NOTE, isCompliant } from './compliance.ts'
 import {
   ACTIVITY_LIMIT,
   fetchActivity,
@@ -16,7 +18,18 @@ import {
   type MentionPost,
 } from './money.ts'
 import { deskKey } from './padding.ts'
-import { isDonationNote, isRefundNote, isRestricted, isVaultNote, REFUND_NOTE, RESTRICTED_NOTE, RESTRICTED_STOCK_NOTE, resolveNote, type RestrictedHit } from './resolve.ts'
+import {
+  isDonationNote,
+  isRefundNote,
+  isRestricted,
+  isVaultNote,
+  REFUND_NOTE,
+  RESTRICTED_NOTE,
+  RESTRICTED_STOCK_NOTE,
+  RESTRICTED_USER_NOTE,
+  resolveNote,
+  type RestrictedHit,
+} from './resolve.ts'
 import { store as openLedger, type PaymentRow, type Store } from './store.ts'
 import type { Mention } from './tag.ts'
 
@@ -60,7 +73,14 @@ export async function runIngest(): Promise<IngestSummary> {
     store: ledger,
     desks: await loadDesks(),
     activity: fetchActivity,
-    resolve: (note) => resolveNote(note, searchMarket, (symbol) => ledger.launchListing(symbol), isRestrictedCoin),
+    resolve: (note) =>
+      resolveNote(
+        note,
+        searchMarket,
+        (symbol) => ledger.launchListing(symbol),
+        isRestrictedCoin,
+        async (venue, symbol) => isMarketRestricted(await ledger.moderation(), venue, symbol),
+      ),
     quote: async (id) => {
       const [quote] = await getQuotes([id])
       return quote && quote.price > 0 ? quote.price : null
@@ -134,6 +154,13 @@ async function settle(deps: Deps, desk: Desk, draft: PaymentRow, sender: Person)
     await deps.store.creditVault({ ...draft, status: 'vaulted', detail: 'vault', updatedAt: deps.now }, sender)
     return 'vaulted'
   }
+  const [mod, compliance] = await Promise.all([deps.store.moderation(), deps.store.compliance()])
+  if (isUserRestricted(mod, sender.screenName)) {
+    return refundPayment(deps, desk, draft, sender, RESTRICTED_USER_NOTE)
+  }
+  if (!isCompliant(compliance, sender.screenName)) {
+    return refundPayment(deps, desk, draft, sender, DISCLAIMER_NOTE)
+  }
   let listing = storedListing(draft.detail)
   let restricted = false
   let restrictedStock = false
@@ -148,6 +175,11 @@ async function settle(deps: Deps, desk: Desk, draft: PaymentRow, sender: Person)
     } catch (error) {
       if (!listing) throw error
     }
+  }
+  if (listing && isMarketRestricted(mod, listing.venue, listing.symbol)) {
+    restricted = true
+    restrictedStock = listing.venue !== 'crypto'
+    listing = null
   }
   if (listing?.venue === 'launch') {
     try {
@@ -198,7 +230,7 @@ async function refundPayment(
     await deps.store.finishPayment({
       ...draft,
       status: 'refunded',
-      detail: note === REFUND_NOTE ? 'refunded' : 'restricted',
+      detail: note === REFUND_NOTE ? 'refunded' : note === DISCLAIMER_NOTE ? 'disclaimer' : 'restricted',
       updatedAt: deps.now,
     })
     return 'refunded'
@@ -226,6 +258,19 @@ function heldStock(positions: Position[], screenName: string, query: string): Po
     positions.find((position) => {
       if (position.venue !== 'stock' || !samePerson(position.person.screenName, screenName)) return false
       return position.symbol.toUpperCase() === wanted || position.label.toUpperCase() === wanted || position.name.toLowerCase() === name
+    }) ?? null
+  )
+}
+
+function heldLaunch(positions: Position[], screenName: string, query: string): Position | null {
+  const trimmed = query.trim()
+  const prefixed = trimmed.match(/^xit(?:\s*[:=]\s*|\s+)?([A-Za-z]{2,8})$/i)
+  const wanted = (prefixed?.[1] ?? trimmed.replace(/^launch:/i, '')).toUpperCase()
+  const name = trimmed.toLowerCase()
+  return (
+    positions.find((position) => {
+      if (position.venue !== 'launch' || !samePerson(position.person.screenName, screenName)) return false
+      return position.symbol.toUpperCase() === wanted || position.label.toUpperCase() === `XIT${wanted}` || position.name.toLowerCase() === name
     }) ?? null
   )
 }
@@ -379,7 +424,9 @@ async function settlePost(
       restrictedStock = !!found.stock
       if (command.kind === 'sell') {
         const positions = await deps.store.positions()
-        const held = found.stock ? heldStock(positions, screenName, command.query) : heldCrypto(positions, screenName, command.query)
+        const held = found.stock
+          ? (heldStock(positions, screenName, command.query) ?? heldLaunch(positions, screenName, command.query))
+          : heldCrypto(positions, screenName, command.query)
         if (held) listing = { id: `${held.venue}:${held.symbol}`, venue: held.venue, symbol: held.symbol, name: held.name, label: held.label }
         else restricted = true
       } else restricted = true

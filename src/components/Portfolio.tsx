@@ -1,6 +1,8 @@
 import { useRef, useState } from 'react'
 import { VENUE_LABEL } from '../data/universe'
 import { AssetMark } from './AssetMark'
+import { AdminComposer } from './AdminComposer'
+import { ModerationPanel } from './ModerationPanel'
 import { formatClock, formatPct, formatPrice, formatQty, formatUsd, pnlClass } from '../lib/format'
 import { marketValue, openPnl } from '../lib/account'
 import { saleFor, type Viewer } from '../lib/api'
@@ -9,7 +11,6 @@ import type { Fill, Position, Quote } from '../types'
 function ownedBy(position: Position, screenName: string): boolean {
   return position.person.screenName.toLowerCase() === screenName.toLowerCase()
 }
-import { AdminComposer } from './AdminComposer'
 
 export function Portfolio({
   viewer,
@@ -32,6 +33,9 @@ export function Portfolio({
   onClose: (position: Position, cash: boolean) => Promise<void>
   onOpened: () => void
 }) {
+  const pending = useRef(false)
+  const [busy, setBusy] = useState(false)
+
   if (!viewer) {
     return (
       <main className="sheet">
@@ -53,13 +57,12 @@ export function Portfolio({
     rows.reduce((sum, position) => sum + marketValue(position, quotes[`${position.venue}:${position.symbol}`]?.price), 0)
   const pnlOf = (rows: Position[]) =>
     rows.reduce((sum, position) => sum + openPnl(position, quotes[`${position.venue}:${position.symbol}`]?.price), 0)
+  const canModerate = viewer.admin || viewer.moderator
   const ownValue = valueOf(own)
   const ownPnl = pnlOf(own)
   const bookValue = valueOf(positions)
   const bookPnl = pnlOf(positions)
   const names = desks.length ? desks.map((desk) => `@${desk}`).join(' or ') : 'the desk'
-  const pending = useRef(false)
-  const [busy, setBusy] = useState(false)
 
   async function close(position: Position, cash: boolean) {
     if (pending.current) return
@@ -156,13 +159,14 @@ export function Portfolio({
         <Stat label="Cash" value={formatUsd(nqfxCents / 100)} />
         <Stat label="Positions" value={String(counted.length)} />
         <Stat label="Account" value={`@${viewer.screenName}`} />
-        <Stat label="Role" value={viewer.admin ? 'Admin' : 'Member'} />
+        <Stat label="Role" value={viewer.admin ? 'Admin' : viewer.moderator ? 'Moderator' : 'Member'} />
       </div>
       <div className="pill-row">
         <button type="button" className="invest composer-toggle" disabled={busy} onClick={onWithdraw}>
           Withdraw
         </button>
         {viewer.admin ? <AdminComposer onOpened={onOpened} /> : null}
+        {canModerate ? <ModerationPanel onChanged={onOpened} /> : null}
       </div>
       {viewer.admin ? (
         <section className="holdings">

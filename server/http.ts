@@ -5,7 +5,9 @@ import { ALLOWED_CRYPTO, getCandles, getQuotes, isCryptoStock, isInterval, isRes
 import { cashOut } from './close.ts'
 import { withdrawCash } from './withdraw.ts'
 import { payoutCents } from './payout.ts'
-import { adminNames, findPerson, fetchMe, loadDesks, readWallet, sendPayout, transferLimit } from './money.ts'
+import { adminNames, findPerson, fetchMe, loadDesks, moderatorNames, readWallet, sendPayout, transferLimit } from './money.ts'
+import { canModerate, isMarketRestricted, isUserRestricted, type ModerationAction } from './moderation.ts'
+import { DISCLAIMER_NOTE, isCompliant } from './compliance.ts'
 import { runIngest } from './ingest.ts'
 import {
   clientDocument,
@@ -76,8 +78,16 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse): Prom
         send(res, 400, { error: 'bad_venue' })
         return
       }
-      const hits = await searchMarket(venue, url.searchParams.get('q') ?? '')
-      send(res, 200, { hits: venue === 'stock' ? hits.filter((hit) => !isCryptoStock(hit.name, hit.symbol)) : hits })
+      const [hits, mod] = await Promise.all([
+        searchMarket(venue, url.searchParams.get('q') ?? ''),
+        (await openLedger()).moderation(),
+      ])
+      send(res, 200, {
+        hits: hits.filter((hit) => {
+          if (hit.venue === 'stock' && isCryptoStock(hit.name, hit.symbol)) return false
+          return !isMarketRestricted(mod, hit.venue, hit.symbol)
+        }),
+      })
       return
     }
     if (url.pathname === '/api/xitter/users') {
@@ -155,6 +165,25 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse): Prom
     }
     if (url.pathname === '/api/vault/withdraw' && req.method === 'POST') {
       await withdrawVault(req, res)
+      return
+    }
+    if (url.pathname === '/api/disclaimer' && req.method === 'POST') {
+      const viewer = await viewerFrom(req)
+      if (!viewer) {
+        send(res, 401, { error: 'unauthorized' })
+        return
+      }
+      const ledger = await openLedger()
+      await ledger.acceptDisclaimer(viewer.screenName)
+      send(res, 200, { user: { ...viewer, compliant: true } })
+      return
+    }
+    if (url.pathname === '/api/moderation' && req.method === 'GET') {
+      await readModerationState(req, res)
+      return
+    }
+    if (url.pathname === '/api/moderation' && req.method === 'POST') {
+      await writeModerationState(req, res)
       return
     }
     if (url.pathname === '/api/cron/payments') {
@@ -281,12 +310,26 @@ async function openPosition(req: IncomingMessage, res: ServerResponse) {
     send(res, 400, { error: 'restricted', message: "That coin isn't available." })
     return
   }
+  const ledger = await openLedger()
+  const mod = await ledger.moderation()
+  if (isMarketRestricted(mod, parsed.venue, parsed.symbol)) {
+    const message = parsed.venue === 'crypto' ? "That coin isn't available." : "That stock isn't available."
+    send(res, 400, { error: 'restricted', message })
+    return
+  }
   const person = await findPerson(screenName)
   if (!person) {
     send(res, 400, { error: 'no_person' })
     return
   }
-  const ledger = await openLedger()
+  if (isUserRestricted(mod, person.screenName)) {
+    send(res, 400, { error: 'restricted_user', message: 'That account is restricted.' })
+    return
+  }
+  if (!isCompliant(await ledger.compliance(), person.screenName)) {
+    send(res, 403, { error: 'disclaimer', message: DISCLAIMER_NOTE })
+    return
+  }
   const [quote] = parsed.venue === 'launch' ? [await ledger.launchQuote(parsed.symbol)] : await getQuotes([id])
   if (!quote || !(quote.price > 0)) {
     send(res, 502, { error: 'no_price' })
@@ -456,6 +499,10 @@ async function launchStock(req: IncomingMessage, res: ServerResponse) {
     send(res, 401, { error: 'unauthorized', message: 'Log in to launch a stock.' })
     return
   }
+  if (!viewer.compliant) {
+    send(res, 403, { error: 'disclaimer', message: DISCLAIMER_NOTE })
+    return
+  }
   const body = await readJson(req)
   const ledger = await openLedger()
   const opened = await ledger.openLaunch({
@@ -467,11 +514,67 @@ async function launchStock(req: IncomingMessage, res: ServerResponse) {
     now: Date.now(),
   })
   if (!opened.ok) {
-    const status = opened.error === 'taken' || opened.error === 'poor' ? 409 : 400
+    const status = opened.error === 'restricted_user' ? 403 : opened.error === 'taken' || opened.error === 'poor' || opened.error === 'delisted' ? 409 : 400
     send(res, status, { error: opened.error, message: opened.message })
     return
   }
   send(res, 200, { ok: true, symbol: opened.launch.symbol, label: opened.launch.label })
+}
+
+async function moderationPayload(ledger: Awaited<ReturnType<typeof openLedger>>) {
+  const [state, launches] = await Promise.all([ledger.moderation(), ledger.allLaunches()])
+  const delisted = new Set(state.delistedLaunches)
+  return {
+    ...state,
+    launches: launches.map((launch) => ({
+      symbol: launch.symbol,
+      label: launch.label,
+      name: launch.name,
+      creator: launch.creator.screenName,
+      delisted: delisted.has(launch.symbol),
+    })),
+  }
+}
+
+async function readModerationState(req: IncomingMessage, res: ServerResponse) {
+  const viewer = await viewerFrom(req)
+  if (!viewer) {
+    send(res, 401, { error: 'unauthorized' })
+    return
+  }
+  if (!canModerate(viewer)) {
+    send(res, 403, { error: 'forbidden' })
+    return
+  }
+  send(res, 200, await moderationPayload(await openLedger()))
+}
+
+async function writeModerationState(req: IncomingMessage, res: ServerResponse) {
+  const viewer = await viewerFrom(req)
+  if (!viewer) {
+    send(res, 401, { error: 'unauthorized' })
+    return
+  }
+  if (!canModerate(viewer)) {
+    send(res, 403, { error: 'forbidden' })
+    return
+  }
+  const body = await readJson(req)
+  const kind = text(body.kind)
+  const target = text(body.target)
+  const active = body.active === true
+  if (kind !== 'delist_launch' && kind !== 'restrict_market' && kind !== 'restrict_user') {
+    send(res, 400, { error: 'bad_action', message: 'Invalid moderation action.' })
+    return
+  }
+  const action: ModerationAction = { kind, target, active }
+  const ledger = await openLedger()
+  const updated = await ledger.moderate(action)
+  if (!updated) {
+    send(res, 400, { error: 'bad_target', message: 'Enter a valid ticker or username.' })
+    return
+  }
+  send(res, 200, await moderationPayload(ledger))
 }
 
 async function quotesFor(ids: string[]) {
@@ -506,18 +609,22 @@ function withCloseLock<T>(id: string, run: () => Promise<T>): Promise<T> {
   return result
 }
 
-async function viewerFrom(req: IncomingMessage): Promise<(Person & { admin: boolean }) | null> {
+async function viewerFrom(req: IncomingMessage): Promise<(Person & { admin: boolean; moderator: boolean; compliant: boolean }) | null> {
   const id = verifyValue(cookiesOf(req).larp_session ?? '')
   if (!id) return null
-  const session = await (await openLedger()).session(id)
+  const ledger = await openLedger()
+  const session = await ledger.session(id)
   if (!session) return null
-  const admins = await adminNames()
+  const [admins, moderators, compliance] = await Promise.all([adminNames(), moderatorNames(), ledger.compliance()])
+  const name = session.screenName.toLowerCase()
   return {
     id: session.id,
     screenName: session.screenName,
     name: session.name,
     avatarUrl: session.avatarUrl,
-    admin: admins.has(session.screenName.toLowerCase()),
+    admin: admins.has(name),
+    moderator: moderators.has(name),
+    compliant: isCompliant(compliance, name),
   }
 }
 

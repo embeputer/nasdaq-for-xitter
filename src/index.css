@@ -784,6 +784,46 @@ button:focus-visible {
   border-radius: 4px;
   padding: 12px;
 }
+.mod-panel .mod-group { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--line); }
+.mod-panel .mod-group h3 { margin: 0 0 8px; font-size: 15px; font-weight: 800; }
+.mod-row { display: flex; gap: 8px; align-items: center; }
+.mod-row select {
+  background: var(--fill);
+  color: var(--ink);
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 12px 10px;
+}
+.mod-row input { flex: 1; min-width: 0; }
+.mod-row .close, .mod-list .close {
+  border: 0;
+  border-radius: 999px;
+  background: var(--button);
+  color: var(--button-ink);
+  font-weight: 700;
+  height: 36px;
+  padding: 0 14px;
+  white-space: nowrap;
+}
+.mod-row .close:disabled, .mod-list .close:disabled { opacity: 0.5; cursor: not-allowed; }
+.mod-list { list-style: none; padding: 0; margin: 10px 0 0; }
+.mod-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 14px;
+}
+.mod-list em { font-style: normal; color: var(--dim); }
+.mod-tag {
+  margin-left: 8px;
+  font-style: normal;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--down);
+}
 
 @media (max-width: 980px) {
   .app { height: auto; }

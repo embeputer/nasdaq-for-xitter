@@ -52,10 +52,22 @@ export function clearDeskCache() {
 
 const DEFAULT_ADMINS = ['nasdaq', 'nyse', 'ember', 'puppy']
 
+function parseNameList(raw: string): string[] {
+  return raw
+    .split(',')
+    .map((name) => name.trim().replace(/^@/, '').toLowerCase())
+    .filter(Boolean)
+}
+
 export async function adminNames(): Promise<Set<string>> {
   const configured = readEnv('LARP_ADMINS')
-  const names = (configured ? configured.split(',') : DEFAULT_ADMINS).map((name) => name.trim().toLowerCase()).filter(Boolean)
+  const names = configured ? parseNameList(configured) : DEFAULT_ADMINS
   return new Set(names.length ? names : DEFAULT_ADMINS)
+}
+
+export async function moderatorNames(): Promise<Set<string>> {
+  const configured = readEnv('LARP_MODERATORS')
+  return new Set(configured ? parseNameList(configured) : [])
 }
 
 export function idempotencyKey(paymentId: string): string {

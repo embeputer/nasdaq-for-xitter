@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { closeFor, fetchBook, fetchCandles, fetchQuotes, fetchSession, logout, withdrawFor, type Book, type Viewer } from './lib/api'
+import { acceptDisclaimer, closeFor, fetchBook, fetchCandles, fetchQuotes, fetchSession, logout, withdrawFor, type Book, type Viewer } from './lib/api'
 import { marketValue } from './lib/account'
 import { formatUsd } from './lib/format'
 import { equitySession, sessionFromMarketState, shownSession, type EquitySession } from './lib/session'
@@ -57,6 +57,8 @@ function viewFromLocation(): 'discover' | 'portfolio' {
 export default function App() {
   const [view, setView] = useState<'discover' | 'portfolio'>(viewFromLocation)
   const [viewer, setViewer] = useState<Viewer | null>(null)
+  const [sessionLoaded, setSessionLoaded] = useState(false)
+  const [accepting, setAccepting] = useState(false)
   const [book, setBook] = useState<Book>({ positions: [], fills: [], desks: [], durable: true, nqfxCents: 0 })
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [quotes, setQuotes] = useState<Record<string, Quote>>({})
@@ -103,7 +105,10 @@ export default function App() {
                 : ''
       setNotice(detail ? `Xitter sign-in did not finish. ${detail}` : 'Xitter sign-in did not finish.')
     }
-    void fetchSession().then(setViewer)
+    void fetchSession().then((user) => {
+      setViewer(user)
+      setSessionLoaded(true)
+    })
   }, [])
 
   useEffect(() => {
@@ -183,6 +188,69 @@ export default function App() {
 
   async function refresh() {
     setBook(await fetchBook())
+  }
+
+  async function accept() {
+    if (accepting) return
+    setAccepting(true)
+    try {
+      const user = await acceptDisclaimer()
+      if (user) setViewer(user)
+    } catch (error: unknown) {
+      setNotice(error instanceof Error ? error.message : 'Could not accept the disclaimer.')
+    } finally {
+      setAccepting(false)
+    }
+  }
+
+  if (!sessionLoaded) {
+    return (
+      <div className="app app-sheet">
+        <main className="sheet">
+          <p className="value-label">Nasdaq for Xitter</p>
+          <h1>Loading</h1>
+        </main>
+      </div>
+    )
+  }
+
+  if (!viewer) {
+    return (
+      <div className="app app-sheet">
+        <main className="sheet">
+          <p className="value-label">Nasdaq for Xitter</p>
+          <h1>Log in</h1>
+          <p className="hint login-copy">
+            Log in with Xitter to see the market. First time here? After signing in you'll accept the disclaimer at nqfx.embie.tech,
+            then you can invest.
+          </p>
+          <a className="invest login-link" href="/api/oauth/start">
+            Log in with Xitter
+          </a>
+        </main>
+      </div>
+    )
+  }
+
+  if (!viewer.compliant) {
+    return (
+      <div className="app app-sheet">
+        <main className="sheet">
+          <p className="value-label">Nasdaq for Xitter</p>
+          <h1>Disclaimer</h1>
+          <p className="hint login-copy">
+            NQFX is a simulated market. All money in it — Equicoins and Cash — is play money: you cannot buy it, and you cannot cash it
+            out. Nothing here is real money, financial advice, or a chance to win anything of value.
+          </p>
+          <p className="hint login-copy">
+            By accepting, you confirm you understand this is a game and agree to the disclaimer at nqfx.embie.tech.
+          </p>
+          <button type="button" className="invest login-link" disabled={accepting} onClick={() => void accept()}>
+            {accepting ? 'Accepting…' : 'I accept the disclaimer'}
+          </button>
+        </main>
+      </div>
+    )
   }
 
   async function withdrawCash(amount: number) {

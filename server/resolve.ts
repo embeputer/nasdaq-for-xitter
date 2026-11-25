@@ -7,6 +7,8 @@ export const RESTRICTED_NOTE = "Sorry, that coin isn't available."
 
 export const RESTRICTED_STOCK_NOTE = "Sorry, that stock isn't available."
 
+export const RESTRICTED_USER_NOTE = 'Sorry, your account is restricted from opening positions.'
+
 const PREVIOUS_REFUND_NOTES = [
   'Sorry, i couldn\'t find that! Make sure you specify an available stock, crypto, or perpetual market. If donating, enter "donate" in the note.',
 ]
@@ -19,7 +21,13 @@ export function isRestricted(hit: Listing | RestrictedHit | null): hit is Restri
 
 export function isRefundNote(note: string): boolean {
   const text = note.trim()
-  return text === REFUND_NOTE || text === RESTRICTED_NOTE || text === RESTRICTED_STOCK_NOTE || PREVIOUS_REFUND_NOTES.includes(text)
+  return (
+    text === REFUND_NOTE ||
+    text === RESTRICTED_NOTE ||
+    text === RESTRICTED_STOCK_NOTE ||
+    text === RESTRICTED_USER_NOTE ||
+    PREVIOUS_REFUND_NOTES.includes(text)
+  )
 }
 
 const DONATION = new Set([
@@ -210,6 +218,7 @@ export async function resolveNote(
   search: Search = searchMarket,
   findLaunch: (symbol: string) => Promise<Listing | null> = async () => null,
   restricted: (query: string) => Promise<boolean> | boolean = async () => false,
+  restrictedMarket: (venue: Venue, symbol: string) => Promise<boolean> | boolean = async () => false,
 ): Promise<Listing | RestrictedHit | null> {
   const raw = note.trim()
   if (!raw || isRefundNote(raw)) return null
@@ -217,7 +226,11 @@ export async function resolveNote(
   for (const item of queries) {
     if (item.venue === 'launch') {
       const found = await findLaunch(item.query)
-      if (found) return found
+      if (found) {
+        if (await restrictedMarket(found.venue, found.symbol)) return { restricted: true, stock: true }
+        return found
+      }
+      if (await restrictedMarket('launch', item.query)) return { restricted: true, stock: true }
       continue
     }
     const explicitCrypto = item.venue === 'crypto' || (!item.venue && /usdt$|usdc$/i.test(item.query))
@@ -227,7 +240,12 @@ export async function resolveNote(
       if (item.venue !== 'stock' && (await restricted(item.query))) return { restricted: true }
       return { restricted: true, stock: true }
     }
-    if (found) return found
+    if (found) {
+      if (await restrictedMarket(found.venue, found.symbol)) {
+        return found.venue === 'crypto' ? { restricted: true } : { restricted: true, stock: true }
+      }
+      return found
+    }
     if (item.venue !== 'stock' && (await restricted(item.query))) return { restricted: true }
   }
   // Catch multi-word restricted coin names (e.g. "SHIBA INU") when no token resolved.

@@ -3,6 +3,8 @@ import { fileBuy, fileClose, samePerson, type Fill, type Person, type Position }
 import { REPLIES, retrySkippedAmount, type Command } from './commands.ts'
 import { planBuy, planSell, planSpend, quoteSell, type Launch } from './launch.ts'
 import type { Venue } from './market.ts'
+import { isLaunchDelisted, isMarketRestricted, isUserRestricted } from './moderation.ts'
+import { isCompliant } from './compliance.ts'
 import { coverClose, creditOnce, deskKey, takePadding } from './padding.ts'
 
 export type Mention = {
@@ -72,6 +74,7 @@ export function decideTag(doc: TradeDoc, input: TagInput): TagResult {
     return { action: 'idle' }
   }
   if (input.command.kind === 'withdraw') return withdraw(doc, input, input.command.cents)
+  if (!isCompliant(doc.meta, input.post.author.screenName)) return reply(doc, input, REPLIES.disclaimer, 0)
   if (input.restricted) return reply(doc, input, input.restrictedStock ? REPLIES.restrictedStock : REPLIES.restricted, 0)
   if (!input.listing || input.listing.venue === 'perpetual') return reply(doc, input, REPLIES.unresolved, 0)
   if (input.command.kind === 'sell') return sell(doc, input, input.listing)
@@ -232,10 +235,15 @@ export function addScore(doc: TradeDoc, fill: Fill): void {
 function buy(doc: TradeDoc, input: TagInput, listing: NonNullable<TagInput['listing']>, cents: number): TagResult {
   const payId = `tag:${input.post.id}`
   if (doc.payments[payId]?.status === 'filled') return reply(doc, input, REPLIES.opened, cents)
+  if (isUserRestricted(doc.meta, input.post.author.screenName)) return reply(doc, input, REPLIES.restrictedUser, 0)
+  if (isMarketRestricted(doc.meta, listing.venue, listing.symbol)) {
+    return reply(doc, input, listing.venue === 'crypto' ? REPLIES.restricted : REPLIES.restrictedStock, 0)
+  }
   if (listing.venue === 'launch') {
     const launch = doc.launches[listing.symbol]
-    const planned = launch ? planBuy(launch, cents, input.now) : null
-    if (!launch || !planned) return reply(doc, input, REPLIES.unresolved, 0)
+    if (!launch || isLaunchDelisted(doc.meta, listing.symbol)) return reply(doc, input, REPLIES.restrictedStock, 0)
+    const planned = planBuy(launch, cents, input.now)
+    if (!planned) return reply(doc, input, REPLIES.unresolved, 0)
     if (!takeVault(doc, input.post.author, input.desk, cents)) return reply(doc, input, REPLIES.poor, 0)
     const bought = fileBuy(doc.positions, {
       venue: 'launch',

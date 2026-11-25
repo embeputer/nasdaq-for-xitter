@@ -21,7 +21,7 @@ export type Launch = {
 
 export type LaunchFailure = {
   ok: false
-  error: 'bad_symbol' | 'bad_name' | 'taken' | 'poor' | 'small' | 'bad_invest'
+  error: 'bad_symbol' | 'bad_name' | 'taken' | 'delisted' | 'restricted_user' | 'poor' | 'small' | 'bad_invest'
   message: string
 }
 
@@ -29,6 +29,8 @@ const LAUNCH_MESSAGE: Record<LaunchFailure['error'], string> = {
   bad_symbol: 'Use 2 to 8 letters.',
   bad_name: 'Give it a name.',
   taken: 'That stock already exists.',
+  delisted: 'That stock has been delisted.',
+  restricted_user: 'Your account is restricted from launching stocks.',
   poor: "You don't have enough NQFX. Send Equicoins with the note vault.",
   small: 'Liquidity has to be at least $1.',
   bad_invest: 'Invest at least $1, or leave it blank.',

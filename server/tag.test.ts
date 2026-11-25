@@ -9,6 +9,12 @@ import { memoryStore, type PaymentRow } from './store.ts'
 import { addScore, ensureScores, type TagInput, type TradeDoc } from './tag.ts'
 import type { Person } from './book.ts'
 
+async function compliantStore(screenName = 'z1xus') {
+  const ledger = memoryStore()
+  await ledger.acceptDisclaimer(screenName)
+  return ledger
+}
+
 const person: Person = { id: 'u1', screenName: 'z1xus', name: 'z', avatarUrl: null }
 const nvda: Listing = { id: 'stock:NVDA', venue: 'stock', symbol: 'NVDA', name: 'NVIDIA', label: 'NVDA' }
 
@@ -59,8 +65,21 @@ describe('tag commands', () => {
     expect(withdrawKey('99', 0)).toMatch(/^[\w-]{8,64}$/)
   })
 
-  it('spends only the tagged desk and does not buy twice', async () => {
+  it('replies with the disclaimer note until the author accepts it', async () => {
     const ledger = memoryStore()
+    await ledger.creditVault(pay('a', 'nasdaq', 3000), person)
+    const gated = await ledger.applyTag(order('p1', { kind: 'buy', query: 'NVDA', cents: 2000 }, nvda, 10, null))
+    expect(gated).toEqual({ action: 'reply', text: REPLIES.disclaimer })
+    expect(await ledger.vaultDesk('z1xus', 'nasdaq')).toBe(3000)
+    expect(await ledger.positions()).toEqual([])
+    await ledger.acceptDisclaimer('z1xus')
+    const bought = await ledger.applyTag(order('p2', { kind: 'buy', query: 'NVDA', cents: 2000 }, nvda, 10, null))
+    expect(bought).toEqual({ action: 'reply', text: REPLIES.opened })
+    expect(await ledger.vaultDesk('z1xus', 'nasdaq')).toBe(1000)
+  })
+
+  it('spends only the tagged desk and does not buy twice', async () => {
+    const ledger = await compliantStore()
     await ledger.creditVault(pay('a', 'nasdaq', 3000), person)
     await ledger.creditVault(pay('b', 'NYSE', 4000), person)
     const bought = await ledger.applyTag(order('p1', { kind: 'buy', query: 'NVDA', cents: 2000 }, nvda, 10, null))
@@ -81,7 +100,7 @@ describe('tag commands', () => {
   })
 
   it('replies when the vault is short or the market does not resolve', async () => {
-    const ledger = memoryStore()
+    const ledger = await compliantStore()
     await ledger.creditVault(pay('a', 'nasdaq', 50), person)
     const poor = await ledger.applyTag(order('p', { kind: 'buy', query: 'NVDA', cents: 100 }, nvda, 10, null))
     expect(poor).toEqual({ action: 'reply', text: REPLIES.poor })
@@ -106,7 +125,7 @@ describe('tag commands', () => {
   })
 
   it('sells back into the tagged vault and keeps the position when padding is short', async () => {
-    const gain = memoryStore()
+    const gain = await compliantStore()
     await gain.fillPayment(pay('buy', 'nyse', 2000), { venue: 'stock', symbol: 'NVDA', name: 'NVIDIA', label: 'NVDA', person, amount: 20, price: 10, now: 1 })
     await gain.setMeta('padding:nasdaq', '5000')
     await gain.setMeta('padding:nyse', '0')
@@ -119,7 +138,7 @@ describe('tag commands', () => {
     expect((await gain.leaders())[0]?.realizedCents).toBe(1000)
     expect((await gain.leaders())[0]?.realizedCents).toBe(1000)
 
-    const loss = memoryStore()
+    const loss = await compliantStore()
     await loss.fillPayment(pay('buy', 'nasdaq', 2000), { venue: 'stock', symbol: 'NVDA', name: 'NVIDIA', label: 'NVDA', person, amount: 20, price: 10, now: 1 })
     await loss.setMeta('padding:nasdaq', '5000')
     await loss.applyTag(order('sell', { kind: 'sell', query: 'NVDA' }, nvda, 5, null))
@@ -127,7 +146,7 @@ describe('tag commands', () => {
     expect(await loss.paddingCents('nasdaq')).toBe(6000)
     expect((await loss.leaders())[0]?.realizedCents).toBe(-1000)
 
-    const short = memoryStore()
+    const short = await compliantStore()
     await short.fillPayment(pay('buy', 'nasdaq', 2000), { venue: 'stock', symbol: 'NVDA', name: 'NVIDIA', label: 'NVDA', person, amount: 20, price: 10, now: 1 })
     const held = await short.applyTag(order('sell', { kind: 'sell', query: 'NVDA' }, nvda, 15, null))
     expect(held).toEqual({ action: 'reply', text: REPLIES.short })
@@ -137,7 +156,7 @@ describe('tag commands', () => {
   })
 
   it('buys a user stock at the price the deposit sets', async () => {
-    const ledger = memoryStore()
+    const ledger = await compliantStore()
     await ledger.creditVault(pay('v', 'nasdaq', 20_000), person)
     const opened = await ledger.openLaunch({ person, symbol: 'YAMS', name: 'The Yams', liquidityCents: 10_000, investCents: 0, now: 1 })
     expect(opened.ok).toBe(true)
@@ -162,7 +181,7 @@ describe('tag commands', () => {
   })
 
   it('holds a withdrawal until the send lands, and restores it once if the token cannot send', async () => {
-    const ledger = memoryStore()
+    const ledger = await compliantStore()
     await ledger.creditVault(pay('v', 'nasdaq', 5000), person)
     const held = await ledger.applyTag(order('w', { kind: 'withdraw', cents: 2000 }, null, null, 8000))
     expect(held).toEqual({ action: 'send', cents: 2000, text: REPLIES.withdrawn })
@@ -211,7 +230,7 @@ describe('tag commands', () => {
     addScore(doc, { ...doc.fills[0]!, id: 'new', realized: 2 })
     expect(doc.scores[person.id]?.cents).toBe(700)
 
-    const ledger = memoryStore()
+    const ledger = await compliantStore()
     await ledger.fillPayment(pay('buy', 'nasdaq', 1000), { venue: 'stock', symbol: 'NVDA', name: 'NVIDIA', label: 'NVDA', person, amount: 10, price: 10, now: 1 })
     await ledger.updateBook((positions) => fileClose(positions, positions[0]!.id, 12, 2))
     expect((await ledger.leaders())[0]?.realizedCents).toBe(200)
@@ -226,7 +245,7 @@ describe('tag ingest', () => {
   const desk = { screenName: 'nasdaq', readToken: 'read', writeToken: 'write' }
 
   async function book() {
-    const ledger = memoryStore()
+    const ledger = await compliantStore()
     await ledger.setMeta('bootstrapped:nasdaq', '1')
     await ledger.setMeta('padding-ready:nasdaq', '1')
     await ledger.creditVault(pay('v', 'nasdaq', 10_000), person)

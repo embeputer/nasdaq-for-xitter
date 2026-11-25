@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { fileBuy, fileClose } from './book.ts'
+import { DISCLAIMER_NOTE } from './compliance.ts'
 import { ingest } from './ingest.ts'
 import { ACTIVITY_LIMIT, adminNames, idempotencyKey, parseActivity, type Desk, type IncomingPayment } from './money.ts'
 import { pkcePair } from './oauth.ts'
@@ -11,6 +12,12 @@ import { fileStore, memoryStore } from './store.ts'
 import type { Listing } from './market.ts'
 
 const sender = { id: '9', screenName: 'ada', name: 'Ada', avatarUrl: null }
+
+async function compliantStore(...names: string[]) {
+  const ledger = memoryStore()
+  for (const name of names.length ? names : ['ada', 'bob']) await ledger.acceptDisclaimer(name)
+  return ledger
+}
 
 function payment(id: string, note: string, amount = 2500): IncomingPayment {
   return { id, amountCents: amount, note, direction: 'received', reversed: false, sender }
@@ -203,8 +210,38 @@ describe('book', () => {
 })
 
 describe('ingest', () => {
-  it('skips history, files the sender, and refunds an unknown market once', async () => {
+  it('refunds a sender who has not accepted the disclaimer, with the disclaimer note', async () => {
     const ledger = memoryStore()
+    const notes: (string | undefined)[] = []
+    let page = 0
+    const run = () =>
+      ingest({
+        store: ledger,
+        desks: [desk],
+        now: 10,
+        activity: async () => {
+          page += 1
+          return { payments: page === 1 ? [payment('0', 'OLD')] : [payment('1', 'NVDA')], next: null }
+        },
+        resolve: async () => ({ id: 'stock:NVDA', venue: 'stock', symbol: 'NVDA', label: 'NVDA', name: 'NVIDIA' }),
+        quote: async () => 25,
+        refund: async (_token, _to, _amount, _id, note) => {
+          notes.push(note)
+        },
+      })
+    await run() // first page is history
+    const summary = await run()
+    expect(summary.refunded).toBe(1)
+    expect(summary.filled).toBe(0)
+    expect(notes).toEqual([DISCLAIMER_NOTE])
+    expect(await ledger.positions()).toHaveLength(0)
+    const row = await ledger.payment('1')
+    expect(row?.status).toBe('refunded')
+    expect(row?.detail).toBe('disclaimer')
+  })
+
+  it('skips history, files the sender, and refunds an unknown market once', async () => {
+    const ledger = await compliantStore()
     const sent: string[] = []
     let refunds = 0
     const run = (rows: IncomingPayment[]) =>
@@ -250,7 +287,7 @@ describe('ingest', () => {
   })
 
   it('refunds a restricted coin with its own apology', async () => {
-    const ledger = memoryStore()
+    const ledger = await compliantStore()
     const notes: Array<string | undefined> = []
     const run = (rows: IncomingPayment[]) =>
       ingest({
@@ -289,7 +326,7 @@ describe('ingest', () => {
   })
 
   it('keeps only the newest 10 payments in a run', async () => {
-    const ledger = memoryStore()
+    const ledger = await compliantStore()
     let calls = 0
     const rows = Array.from({ length: 12 }, (_, index) => payment(String(index + 1), 'NVDA'))
     await ingest({
@@ -318,7 +355,7 @@ describe('ingest', () => {
   })
 
   it('keeps a donation instead of refunding it', async () => {
-    const ledger = memoryStore()
+    const ledger = await compliantStore()
     let refunds = 0
     const run = (rows: IncomingPayment[]) =>
       ingest({
@@ -344,7 +381,7 @@ describe('ingest', () => {
   })
 
   it('stores a vault note as that person\'s NQFX balance', async () => {
-    const ledger = memoryStore()
+    const ledger = await compliantStore()
     let refunds = 0
     let lookups = 0
     const run = (rows: IncomingPayment[], screenName = 'nasdaq') =>
@@ -403,7 +440,7 @@ describe('ingest', () => {
   })
 
   it('launches a user stock from NQFX and files a later xit note', async () => {
-    const ledger = memoryStore()
+    const ledger = await compliantStore()
     const bob = { id: '8', screenName: 'bob', name: 'Bob', avatarUrl: null }
     const run = (rows: IncomingPayment[], search: () => Promise<never[] | Listing[]> = async () => {
       throw new Error('stock search is not used for xit notes')
@@ -495,7 +532,7 @@ describe('ingest', () => {
   })
 
   it('locks liquidity without opening a position', async () => {
-    const ledger = memoryStore()
+    const ledger = await compliantStore()
     await ledger.creditVault(
       {
         id: 'v1',
@@ -528,7 +565,7 @@ describe('ingest', () => {
   })
 
   it('refunds a perpetual note instead of opening one', async () => {
-    const ledger = memoryStore()
+    const ledger = await compliantStore()
     let refunds = 0
     const run = (rows: IncomingPayment[]) =>
       ingest({

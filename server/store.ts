@@ -25,6 +25,23 @@ import {
 } from './launch.ts'
 import { LOGO_BAD, LOGO_FORBIDDEN, LOGO_MISSING, sniffLogo, writeLogo } from './logo.ts'
 import {
+  applyModeration,
+  DELISTED_LAUNCHES_KEY,
+  isLaunchDelisted,
+  isUserRestricted,
+  readModeration,
+  RESTRICTED_MARKETS_KEY,
+  RESTRICTED_USERS_KEY,
+  type ModerationAction,
+  type ModerationState,
+} from './moderation.ts'
+import {
+  applyCompliance,
+  COMPLIANT_USERS_KEY,
+  readCompliance,
+  type ComplianceState,
+} from './compliance.ts'
+import {
   addLikes,
   addPadding,
   creditLiquidity,
@@ -99,6 +116,7 @@ export type Store = {
   vaultCents(screenName: string): Promise<number>
   launchListing(symbol: string): Promise<Listing | null>
   launchListings(query?: string): Promise<Listing[]>
+  allLaunches(): Promise<Launch[]>
   launchQuote(symbol: string): Promise<Quote | null>
   launchQuotes(symbols: string[]): Promise<Quote[]>
   launchSale(symbol: string, qty: number): Promise<{ cents: number; fillPrice: number } | null>
@@ -133,6 +151,10 @@ export type Store = {
   payments(): Promise<PaymentRow[]>
   meta(key: string): Promise<string | null>
   setMeta(key: string, value: string): Promise<void>
+  moderation(): Promise<ModerationState>
+  moderate(action: ModerationAction): Promise<ModerationState | null>
+  compliance(): Promise<ComplianceState>
+  acceptDisclaimer(screenName: string): Promise<ComplianceState | null>
   mention(id: string): Promise<Mention | null>
   seedMentions(rows: Mention[]): Promise<void>
   openMentions(): Promise<Mention[]>
@@ -321,11 +343,22 @@ function storeFrom(
       )
     },
     async launchListing(symbol) {
-      const launch = read().launches[symbol]
+      const doc = read()
+      if (isLaunchDelisted(doc.meta, symbol)) return null
+      const launch = doc.launches[symbol]
       return launch ? toListing(launch) : null
     },
     async launchListings(query = '') {
-      return filterLaunchListings(Object.values(read().launches).map(toListing), query)
+      const doc = read()
+      return filterLaunchListings(
+        Object.values(doc.launches)
+          .filter((launch) => !isLaunchDelisted(doc.meta, launch.symbol))
+          .map(toListing),
+        query,
+      )
+    },
+    async allLaunches() {
+      return Object.values(read().launches).sort((a, b) => a.symbol.localeCompare(b.symbol))
     },
     async launchQuote(symbol) {
       const launch = read().launches[symbol]
@@ -382,6 +415,14 @@ function storeFrom(
         const amounts = launchAmounts(input.liquidityCents, input.investCents)
         if (!('liquidityCents' in amounts)) {
           result = amounts
+          return
+        }
+        if (isUserRestricted(doc.meta, screenName)) {
+          result = launchFailure('restricted_user')
+          return
+        }
+        if (isLaunchDelisted(doc.meta, symbol)) {
+          result = launchFailure('delisted')
           return
         }
         if (doc.launches[symbol]) {
@@ -445,6 +486,10 @@ function storeFrom(
       await edit((doc) => {
         if (doc.payments[row.id]?.status === 'filled') {
           result = 'filled'
+          return
+        }
+        if (isLaunchDelisted(doc.meta, symbol) || isUserRestricted(doc.meta, person.screenName)) {
+          result = 'missing'
           return
         }
         const launch = doc.launches[symbol]
@@ -570,6 +615,26 @@ function storeFrom(
       await edit((doc) => {
         doc.meta[key] = value
       })
+    },
+    async moderation() {
+      return readModeration(read().meta)
+    },
+    async moderate(action) {
+      let result: ModerationState | null = null
+      await edit((doc) => {
+        result = applyModeration(doc.meta, action)
+      })
+      return result
+    },
+    async compliance() {
+      return readCompliance(read().meta)
+    },
+    async acceptDisclaimer(screenName) {
+      let result: ComplianceState | null = null
+      await edit((doc) => {
+        result = applyCompliance(doc.meta, screenName, true)
+      })
+      return result
     },
     async mention(id) {
       return read().mentions[id] ?? null
@@ -721,6 +786,10 @@ async function postgresStore(url: string): Promise<Store> {
           insert into larp_meta (key, value) values (${key}, ${value})
           on conflict (key) do update set value = excluded.value
         `
+      }
+      for (const key of Object.keys(before)) {
+        if (key in meta) continue
+        await tx`delete from larp_meta where key = ${key}`
       }
     })
   }
@@ -953,12 +1022,27 @@ async function postgresStore(url: string): Promise<Store> {
       return rows.reduce((sum, row) => (row.body.person.screenName.toLowerCase() === name ? sum + row.body.cents : sum), 0)
     },
     async launchListing(symbol) {
-      const rows = await sql<{ body: Launch }[]>`select body from larp_launches where id = ${symbol}`
+      const [rows, metaRows] = await Promise.all([
+        sql<{ body: Launch }[]>`select body from larp_launches where id = ${symbol}`,
+        sql<{ value: string }[]>`select value from larp_meta where key = ${DELISTED_LAUNCHES_KEY}`,
+      ])
+      if (isLaunchDelisted({ [DELISTED_LAUNCHES_KEY]: metaRows[0]?.value ?? '' }, symbol)) return null
       return rows[0] ? toListing(rows[0].body) : null
     },
     async launchListings(query = '') {
+      const [rows, metaRows] = await Promise.all([
+        sql<{ body: Launch }[]>`select body from larp_launches`,
+        sql<{ value: string }[]>`select value from larp_meta where key = ${DELISTED_LAUNCHES_KEY}`,
+      ])
+      const meta = { [DELISTED_LAUNCHES_KEY]: metaRows[0]?.value ?? '' }
+      return filterLaunchListings(
+        rows.filter((row) => !isLaunchDelisted(meta, row.body.symbol)).map((row) => toListing(row.body)),
+        query,
+      )
+    },
+    async allLaunches() {
       const rows = await sql<{ body: Launch }[]>`select body from larp_launches`
-      return filterLaunchListings(rows.map((row) => toListing(row.body)), query)
+      return rows.map((row) => row.body).sort((a, b) => a.symbol.localeCompare(b.symbol))
     },
     async launchQuote(symbol) {
       const rows = await sql<{ body: Launch }[]>`select body from larp_launches where id = ${symbol}`
@@ -1010,6 +1094,13 @@ async function postgresStore(url: string): Promise<Store> {
       if (!('liquidityCents' in amounts)) return amounts
       return sql.begin(async (tx) => {
         await tx`select pg_advisory_xact_lock(847211)`
+        const modRows = await tx<{ key: string; value: string }[]>`
+          select key, value from larp_meta where key in (${DELISTED_LAUNCHES_KEY}, ${RESTRICTED_USERS_KEY})
+        `
+        const modMeta: Record<string, string> = {}
+        for (const row of modRows) modMeta[row.key] = row.value
+        if (isUserRestricted(modMeta, screenName)) return launchFailure('restricted_user')
+        if (isLaunchDelisted(modMeta, symbol)) return launchFailure('delisted')
         const existing = await tx<{ body: Launch }[]>`select body from larp_launches where id = ${symbol} for update`
         if (existing[0]) return launchFailure('taken')
         const vaultRows = await tx<{ id: string; body: Vault }[]>`select id, body from larp_vaults for update`
@@ -1088,6 +1179,12 @@ async function postgresStore(url: string): Promise<Store> {
     async buyLaunch(row, person, symbol, now) {
       return sql.begin(async (tx) => {
         await tx`select pg_advisory_xact_lock(847211)`
+        const modRows = await tx<{ key: string; value: string }[]>`
+          select key, value from larp_meta where key in (${DELISTED_LAUNCHES_KEY}, ${RESTRICTED_USERS_KEY})
+        `
+        const modMeta: Record<string, string> = {}
+        for (const row of modRows) modMeta[row.key] = row.value
+        if (isLaunchDelisted(modMeta, symbol) || isUserRestricted(modMeta, person.screenName)) return 'missing' as const
         const payments = await tx<{ body: PaymentRow }[]>`select body from larp_payments where id = ${row.id} for update`
         if (payments[0]?.body.status === 'filled') return 'filled' as const
         const found = await tx<{ body: Launch }[]>`select body from larp_launches where id = ${symbol} for update`
@@ -1272,6 +1369,36 @@ async function postgresStore(url: string): Promise<Store> {
         insert into larp_meta (key, value) values (${key}, ${value})
         on conflict (key) do update set value = excluded.value
       `
+    },
+    async moderation() {
+      const rows = await sql<{ key: string; value: string }[]>`
+        select key, value from larp_meta where key in (${DELISTED_LAUNCHES_KEY}, ${RESTRICTED_MARKETS_KEY}, ${RESTRICTED_USERS_KEY})
+      `
+      const meta: Record<string, string> = {}
+      for (const row of rows) meta[row.key] = row.value
+      return readModeration(meta)
+    },
+    async moderate(action) {
+      let result: ModerationState | null = null
+      await changeMeta((meta) => {
+        result = applyModeration(meta, action)
+      })
+      return result
+    },
+    async compliance() {
+      const rows = await sql<{ key: string; value: string }[]>`
+        select key, value from larp_meta where key = ${COMPLIANT_USERS_KEY}
+      `
+      const meta: Record<string, string> = {}
+      for (const row of rows) meta[row.key] = row.value
+      return readCompliance(meta)
+    },
+    async acceptDisclaimer(screenName) {
+      let result: ComplianceState | null = null
+      await changeMeta((meta) => {
+        result = applyCompliance(meta, screenName, true)
+      })
+      return result
     },
     async mention(id) {
       const rows = await sql<{ body: Mention }[]>`select body from larp_mentions where id = ${id}`
