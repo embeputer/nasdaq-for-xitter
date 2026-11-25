@@ -1,15 +1,23 @@
-import { contractAddress, isContractAddress, searchMarket, type Listing, type Venue } from './market.ts'
+import { searchMarket, type Listing, type Venue } from './market.ts'
 
 export const REFUND_NOTE =
   'Sorry, i couldn\'t find that! Make sure you specify an available stock or crypto market. If donating, enter "donate" in the note.'
+
+export const RESTRICTED_NOTE = "Sorry, that coin isn't available."
 
 const PREVIOUS_REFUND_NOTES = [
   'Sorry, i couldn\'t find that! Make sure you specify an available stock, crypto, or perpetual market. If donating, enter "donate" in the note.',
 ]
 
+export type RestrictedHit = { restricted: true }
+
+export function isRestricted(hit: Listing | RestrictedHit | null): hit is RestrictedHit {
+  return !!hit && 'restricted' in hit
+}
+
 export function isRefundNote(note: string): boolean {
   const text = note.trim()
-  return text === REFUND_NOTE || PREVIOUS_REFUND_NOTES.includes(text)
+  return text === REFUND_NOTE || text === RESTRICTED_NOTE || PREVIOUS_REFUND_NOTES.includes(text)
 }
 
 const DONATION = new Set([
@@ -121,15 +129,19 @@ function stripLaunchTokens(text: string): string {
     .replace(/\bxit[A-Za-z]{2,8}\b/gi, ' ')
 }
 
+function stripAddresses(text: string): string {
+  return text
+    .replace(/0x[a-fA-F0-9]{40}/g, ' ')
+    .replace(/(^|[^1-9A-HJ-NP-Za-km-z])([1-9A-HJ-NP-Za-km-z]{32,44})(?=$|[^1-9A-HJ-NP-Za-km-z])/g, '$1 ')
+}
+
 export function queriesFromNote(note: string): NoteQuery[] {
   const raw = note.trim()
   if (!raw || isRefundNote(raw)) return []
   const text = withoutPerps(raw)
   const launches = launchQueries(text)
-  const rest = stripLaunchTokens(text)
+  const rest = stripAddresses(stripLaunchTokens(text))
   if (!rest.trim()) return dedupeQueries(launches)
-  const address = contractAddress(rest)
-  if (address && rest.toLowerCase() === address.toLowerCase()) return dedupeQueries([{ venue: 'crypto', query: address }, ...launches])
   if (!/\s/.test(rest)) {
     if (/^[A-Za-z][\w.]{0,23}$/.test(rest)) return dedupeQueries([...launches, { venue: null, query: rest }])
   }
@@ -147,7 +159,6 @@ export function queriesFromNote(note: string): NoteQuery[] {
       out.push({ venue: null, query: token })
     }
   }
-  if (address) out.unshift({ venue: 'crypto', query: address })
   return dedupeQueries([...launches, ...out])
 }
 
@@ -196,9 +207,21 @@ export async function resolveNote(
   note: string,
   search: Search = searchMarket,
   findLaunch: (symbol: string) => Promise<Listing | null> = async () => null,
-): Promise<Listing | null> {
-  for (const item of queriesFromNote(note)) {
-    const found = item.venue === 'launch' ? await findLaunch(item.query) : await resolveQuery(item, search)
+  restricted: (query: string) => Promise<boolean> | boolean = async () => false,
+): Promise<Listing | RestrictedHit | null> {
+  const raw = note.trim()
+  if (!raw || isRefundNote(raw)) return null
+  const queries = queriesFromNote(raw)
+  // $DOGE and stock:DOGE stay on the stock. A bare ticker can still be refused.
+  if (!queries.some((item) => item.venue === 'stock') && (await restricted(raw))) return { restricted: true }
+  for (const item of queries) {
+    if (item.venue === 'launch') {
+      const found = await findLaunch(item.query)
+      if (found) return found
+      continue
+    }
+    if (item.venue !== 'stock' && (await restricted(item.query))) return { restricted: true }
+    const found = await resolveQuery(item, search)
     if (found) return found
   }
   return null
@@ -207,7 +230,6 @@ export async function resolveNote(
 async function resolveQuery(item: NoteQuery, search: Search): Promise<Listing | null> {
   if (item.venue) {
     const hits = await search(item.venue, item.query)
-    if (isContractAddress(item.query)) return hits[0] ?? null
     return pickListing(hits, item.query, item.venue)
   }
   if (/usdt$|usdc$/i.test(item.query)) {

@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { fileBuy, fileClose, samePerson, type Fill, type Person, type Position } from './book.ts'
 import { REPLIES, retrySkippedAmount, type Command } from './commands.ts'
-import { planBuy, planSell, planSpend, type Launch } from './launch.ts'
+import { planBuy, planSell, planSpend, quoteSell, type Launch } from './launch.ts'
 import type { Venue } from './market.ts'
 import { coverClose, creditOnce, deskKey, takePadding } from './padding.ts'
 
@@ -51,6 +51,7 @@ export type TagInput = {
   listing: { venue: Venue; symbol: string; name: string; label: string } | null
   price: number | null
   sendRoom: number | null
+  restricted?: boolean
   now: number
 }
 
@@ -70,6 +71,7 @@ export function decideTag(doc: TradeDoc, input: TagInput): TagResult {
     return { action: 'idle' }
   }
   if (input.command.kind === 'withdraw') return withdraw(doc, input, input.command.cents)
+  if (input.restricted) return reply(doc, input, REPLIES.restricted, 0)
   if (!input.listing || input.listing.venue === 'perpetual') return reply(doc, input, REPLIES.unresolved, 0)
   if (input.command.kind === 'sell') return sell(doc, input, input.listing)
   return buy(doc, input, input.listing, input.command.cents)
@@ -269,10 +271,11 @@ function buy(doc: TradeDoc, input: TagInput, listing: NonNullable<TagInput['list
 }
 
 function sell(doc: TradeDoc, input: TagInput, listing: NonNullable<TagInput['listing']>): TagResult {
-  if (!(input.price && input.price > 0)) return { action: 'wait' }
   const position = doc.positions.find(
     (item) => item.venue === listing.venue && item.symbol === listing.symbol && samePerson(item.person.screenName, input.post.author.screenName),
   )
+  if (position?.venue === 'launch') return sellLaunch(doc, input, position)
+  if (!(input.price && input.price > 0)) return { action: 'wait' }
   if (!position) return reply(doc, input, REPLIES.missing, 0)
   const cents = Math.round(position.qty * input.price * 100)
   if (!Number.isSafeInteger(cents) || cents < 1) return reply(doc, input, REPLIES.short, 0)
@@ -295,10 +298,34 @@ function sell(doc: TradeDoc, input: TagInput, listing: NonNullable<TagInput['lis
   ensureScores(doc)
   keepFill(doc, closed.fill)
   addScore(doc, closed.fill)
-  if (position.venue === 'launch') {
-    const launch = doc.launches[position.symbol]
-    if (launch) doc.launches[position.symbol] = planSell(launch, position.qty, cents, input.now)
-  }
+  return reply(doc, input, REPLIES.closed, cents)
+}
+
+function sellLaunch(doc: TradeDoc, input: TagInput, position: Position): TagResult {
+  const launch = doc.launches[position.symbol]
+  const sale = launch ? quoteSell(launch, position.qty) : null
+  if (!launch || !sale) return reply(doc, input, REPLIES.short, 0)
+  const cents = sale.cents
+  const paid = principalPayments(doc, position)
+  const padding = paddingOf(doc)
+  const sendable = new Set<string>([deskKey(input.desk), ...paid.map((row) => deskKey(row.desk)), ...Object.keys(padding)])
+  const plan = coverClose({
+    cents,
+    payments: paid.map((row) => ({ desk: row.desk, amountCents: row.amountCents, updatedAt: row.updatedAt, id: row.id })),
+    padding,
+    balances: null,
+    sendable,
+  })
+  if (plan === 'short' || plan === 'no_account') return reply(doc, input, REPLIES.short, 0)
+  if (!takePadding(doc.meta, plan.reserves)) return reply(doc, input, REPLIES.short, 0)
+  creditOnce(doc.meta, `pad:tag:${input.post.id}`, plan.credit)
+  addVault(doc, input.post.author, input.desk, cents)
+  const closed = fileClose(doc.positions, position.id, sale.fillPrice, input.now)
+  doc.positions = closed.positions
+  ensureScores(doc)
+  keepFill(doc, closed.fill)
+  addScore(doc, closed.fill)
+  doc.launches[position.symbol] = planSell(launch, position.qty, cents, input.now)
   return reply(doc, input, REPLIES.closed, cents)
 }
 

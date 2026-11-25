@@ -3,6 +3,7 @@ import { fileClose } from './book.ts'
 import { REPLIES, parseCommand, withdrawKey } from './commands.ts'
 import { ingest } from './ingest.ts'
 import type { Listing } from './market.ts'
+import { RESTRICTED_NOTE, type RestrictedHit } from './resolve.ts'
 import { parseMentions } from './money.ts'
 import { memoryStore, type PaymentRow } from './store.ts'
 import { addScore, ensureScores, type TagInput, type TradeDoc } from './tag.ts'
@@ -88,6 +89,11 @@ describe('tag commands', () => {
     expect(await ledger.vaultDesk('z1xus', 'nasdaq')).toBe(50)
     const missed = await ledger.applyTag(order('q', { kind: 'buy', query: 'NOPE', cents: 100 }, null, null, null))
     expect(missed).toEqual({ action: 'reply', text: REPLIES.unresolved })
+    const denied = await ledger.applyTag({ ...order('m', { kind: 'buy', query: 'DOGE', cents: 100 }, null, null, null), restricted: true })
+    expect(denied).toEqual({ action: 'reply', text: REPLIES.restricted })
+    expect(REPLIES.restricted).toBe(RESTRICTED_NOTE)
+    expect(await ledger.vaultDesk('z1xus', 'nasdaq')).toBe(50)
+    expect(await ledger.positions()).toEqual([])
     const none = await ledger.applyTag(order('s', { kind: 'sell', query: 'NVDA' }, nvda, 10, null))
     expect(none).toEqual({ action: 'reply', text: REPLIES.missing })
   })
@@ -123,7 +129,7 @@ describe('tag commands', () => {
     expect(await short.paddingCents('nasdaq')).toBe(0)
   })
 
-  it('buys a user stock with the later-buy rule', async () => {
+  it('buys a user stock at the price the deposit sets', async () => {
     const ledger = memoryStore()
     await ledger.creditVault(pay('v', 'nasdaq', 20_000), person)
     const opened = await ledger.openLaunch({ person, symbol: 'YAMS', name: 'The Yams', liquidityCents: 10_000, investCents: 0, now: 1 })
@@ -132,10 +138,20 @@ describe('tag commands', () => {
       order('p', { kind: 'buy', query: 'xitYAMS', cents: 10_000 }, { venue: 'launch', symbol: 'YAMS', name: 'The Yams', label: 'xitYAMS' }, null, null),
     )
     expect(bought).toEqual({ action: 'reply', text: REPLIES.opened })
-    expect((await ledger.positions())[0]?.qty).toBe(90)
-    expect((await ledger.launchQuote('YAMS'))?.price).toBeCloseTo(100 / 90, 8)
+    const held = (await ledger.positions())[0]
+    expect(held?.qty).toBeCloseTo(50)
+    expect(held?.avgPrice).toBeCloseTo(2)
+    expect((await ledger.launchQuote('YAMS'))?.price).toBeCloseTo(4)
+    expect(held!.qty * (await ledger.launchQuote('YAMS'))!.price).toBeCloseTo(200)
     expect((await ledger.payment('tag:p'))?.detail).toBe('launch:YAMS')
     expect(await ledger.vaultDesk('z1xus', 'nasdaq')).toBe(0)
+    const sold = await ledger.applyTag(
+      order('s', { kind: 'sell', query: 'xitYAMS' }, { venue: 'launch', symbol: 'YAMS', name: 'The Yams', label: 'xitYAMS' }, null, null),
+    )
+    expect(sold).toEqual({ action: 'reply', text: REPLIES.closed })
+    expect(await ledger.positions()).toEqual([])
+    expect(await ledger.vaultDesk('z1xus', 'nasdaq')).toBe(10_000)
+    expect((await ledger.launchQuote('YAMS'))?.price).toBeCloseTo(1)
   })
 
   it('holds a withdrawal until the send lands, and restores it once if the token cannot send', async () => {
@@ -214,11 +230,11 @@ describe('tag ingest', () => {
     ledger: ReturnType<typeof memoryStore>,
     posts: { id: string; text: string; author?: Person }[],
     hooks: {
-      quote?: () => Promise<number | null>
+      quote?: (id: string) => Promise<number | null>
       reply?: (text: string) => Promise<void>
       pay?: (cents: number, key: string) => Promise<void>
       wallet?: () => Promise<{ balanceCents: number; maxCents?: number } | null>
-      resolve?: (note: string) => Promise<Listing | null>
+      resolve?: (note: string) => Promise<Listing | RestrictedHit | null>
     } = {},
   ) {
     const replies: string[] = []
@@ -267,6 +283,40 @@ describe('tag ingest', () => {
     expect(bought.replies).toEqual([REPLIES.opened])
     expect(await ledger.vaultDesk('z1xus', 'nasdaq')).toBe(9500)
     expect((await ledger.mention('spy'))?.status).toBe('done')
+  })
+
+  it('apologizes for a restricted coin and still closes one already held', async () => {
+    const ledger = await book()
+    await ledger.setMeta('mentions-ready:nasdaq', '1')
+    await ledger.setMeta('padding:nasdaq', '5000')
+    await ledger.fillPayment(pay('buy', 'nasdaq', 1000), {
+      venue: 'crypto',
+      symbol: 'DOGEUSDT',
+      name: 'Dogecoin',
+      label: 'DOGE',
+      person,
+      amount: 10,
+      price: 10,
+      now: 1,
+    })
+    const denied = await run(ledger, [{ id: 'doge', text: '@nasdaq buy DOGE 5' }], {
+      resolve: async () => ({ restricted: true }),
+    })
+    expect(denied.replies).toEqual([REPLIES.restricted])
+    expect(await ledger.vaultDesk('z1xus', 'nasdaq')).toBe(10_000)
+    expect((await ledger.positions())[0]?.symbol).toBe('DOGEUSDT')
+    const quoted: string[] = []
+    const sold = await run(ledger, [{ id: 'sell', text: '@nasdaq sell DOGE' }], {
+      resolve: async () => ({ restricted: true }),
+      quote: async (id) => {
+        quoted.push(id)
+        return 12
+      },
+    })
+    expect(quoted).toEqual(['crypto:DOGEUSDT'])
+    expect(sold.replies).toEqual([REPLIES.closed])
+    expect(await ledger.positions()).toEqual([])
+    expect(await ledger.vaultDesk('z1xus', 'nasdaq')).toBe(11_200)
   })
 
   it('stores a normal mention without replying, and retries a failed reply without buying again', async () => {

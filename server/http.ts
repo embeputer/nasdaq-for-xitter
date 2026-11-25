@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { fileBuy, fileClose, samePerson, type Person } from './book.ts'
-import { getCandles, getQuotes, isInterval, parseId, searchMarket } from './market.ts'
+import { getCandles, getQuotes, isInterval, isRestrictedCoin, parseId, searchMarket } from './market.ts'
 import { cashOut } from './close.ts'
 import { withdrawCash } from './withdraw.ts'
 import { payoutCents } from './payout.ts'
@@ -144,6 +144,11 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse): Prom
       await launchStock(req, res)
       return
     }
+    const saleMatch = /^\/api\/launches\/([A-Za-z]{2,8})\/sale$/.exec(url.pathname)
+    if (saleMatch && req.method === 'GET') {
+      await launchSale(saleMatch[1] ?? '', Number(url.searchParams.get('qty')), res)
+      return
+    }
     if (url.pathname === '/api/positions/close' && req.method === 'POST') {
       await closePosition(req, res)
       return
@@ -272,6 +277,10 @@ async function openPosition(req: IncomingMessage, res: ServerResponse) {
     send(res, 400, { error: 'closed', message: 'Perpetuals are closed.' })
     return
   }
+  if (parsed.venue === 'crypto' && (await isRestrictedCoin(parsed.symbol))) {
+    send(res, 400, { error: 'restricted', message: "That coin isn't available." })
+    return
+  }
   const person = await findPerson(screenName)
   if (!person) {
     send(res, 400, { error: 'no_person' })
@@ -295,6 +304,15 @@ async function openPosition(req: IncomingMessage, res: ServerResponse) {
     }),
   )
   send(res, 200, { ok: true, screenName: person.screenName })
+}
+
+async function launchSale(symbol: string, qty: number, res: ServerResponse) {
+  const sale = await (await openLedger()).launchSale(symbol.toUpperCase(), qty)
+  if (!sale) {
+    send(res, 404, { error: 'no_price', message: "There's no price for this yet." })
+    return
+  }
+  send(res, 200, sale)
 }
 
 async function closePosition(req: IncomingMessage, res: ServerResponse) {
@@ -328,9 +346,15 @@ async function closePosition(req: IncomingMessage, res: ServerResponse) {
     send(res, 502, { error: 'no_price', message: "There's no price for this yet, so it can't be closed." })
     return
   }
+  const sale = position.venue === 'launch' ? await ledger.launchSale(position.symbol, position.qty) : null
+  if (position.venue === 'launch' && !sale) {
+    send(res, 502, { error: 'no_price', message: "There's no price for this yet, so it can't be closed." })
+    return
+  }
+  const closePrice = sale?.fillPrice ?? quote.price
   if (!cash) {
-    await ledger.updateBook((positions) => fileClose(positions, id, quote.price))
-    if (position.venue === 'launch') await ledger.settleLaunch(position, payoutCents(position.qty, quote.price) ?? 0)
+    await ledger.updateBook((positions) => fileClose(positions, id, closePrice))
+    if (position.venue === 'launch') await ledger.settleLaunch(position, payoutCents(position.qty, closePrice) ?? 0)
     send(res, 200, { ok: true, cash: false })
     return
   }
@@ -338,7 +362,7 @@ async function closePosition(req: IncomingMessage, res: ServerResponse) {
     const result = await cashOut({
       ledger,
       id,
-      price: quote.price,
+      price: closePrice,
       desks: await loadDesks(),
       limit: (desk) => transferLimit(desk.writeToken),
       balance: async (desk) => (await readWallet(desk.readToken)).balanceCents,

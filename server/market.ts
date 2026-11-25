@@ -62,22 +62,6 @@ async function mapPool<T, R>(items: T[], limit: number, fn: (item: T) => Promise
   return out
 }
 
-const EVM_ADDRESS = /0x[a-fA-F0-9]{40}/
-const SOL_ADDRESS = /(?:^|[^1-9A-HJ-NP-Za-km-z])([1-9A-HJ-NP-Za-km-z]{32,44})(?=$|[^1-9A-HJ-NP-Za-km-z])/
-
-export function contractAddress(text: string): string | null {
-  const evm = text.match(EVM_ADDRESS)
-  if (evm) return evm[0].toLowerCase()
-  const sol = text.match(SOL_ADDRESS)
-  return sol?.[1] ?? null
-}
-
-export function isContractAddress(value: string): boolean {
-  const text = value.trim()
-  const found = contractAddress(text)
-  return !!found && (found === text || found === text.toLowerCase())
-}
-
 export function parseId(id: string): { venue: Venue; symbol: string } | null {
   const split = id.indexOf(':')
   if (split <= 0) return null
@@ -89,10 +73,6 @@ export function parseId(id: string): { venue: Venue; symbol: string } | null {
     const upper = symbol.toUpperCase()
     if (!/^[A-Z]{2,8}$/.test(upper)) return null
     return { venue, symbol: upper }
-  }
-  if (venue === 'crypto' && isContractAddress(symbol)) {
-    const address = contractAddress(symbol)
-    return address ? { venue, symbol: address } : null
   }
   if (venue === 'perpetual') {
     if (!/^[\w.:-]{1,32}$/.test(symbol)) return null
@@ -353,15 +333,12 @@ export async function getQuotes(ids: string[]): Promise<Quote[]> {
   const stocks = parsed.filter((item) => item.venue === 'stock').map((item) => item.symbol)
   const crypto = parsed.filter((item) => item.venue === 'crypto').map((item) => item.symbol)
   const perps = parsed.filter((item) => item.venue === 'perpetual').map((item) => item.symbol)
-  const contracts = crypto.filter((symbol) => isContractAddress(symbol))
-  const pairs = crypto.filter((symbol) => !isContractAddress(symbol))
-  const [equity, spot, chain, futures] = await Promise.all([
+  const [equity, spot, futures] = await Promise.all([
     equityQuotes(stocks).catch(() => []),
-    bookTickers('https://api.binance.com/api/v3/ticker/24hr', pairs, 'crypto').catch(() => []),
-    contractQuotes(contracts).catch(() => []),
+    bookTickers('https://api.binance.com/api/v3/ticker/24hr', crypto, 'crypto').catch(() => []),
     hyperliquidQuotes(perps).catch(() => []),
   ])
-  return [...equity, ...spot, ...chain, ...futures]
+  return [...equity, ...spot, ...futures]
 }
 
 const RANGES: Record<Interval, { interval: string; range: string; binance: string }> = {
@@ -388,7 +365,6 @@ export async function getCandles(id: string, interval: Interval): Promise<Candle
   return cached(`c:${id}:${interval}`, candleCacheMs(parsed.venue, interval), async () => {
     if (parsed.venue === 'stock') return stockCandles(parsed.symbol, interval)
     if (parsed.venue === 'perpetual') return hyperliquidCandles(parsed.symbol, interval)
-    if (isContractAddress(parsed.symbol)) return []
     return bookCandles('https://api.binance.com/api/v3/klines', parsed.symbol, RANGES[interval].binance)
   })
 }
@@ -777,100 +753,115 @@ export function isTokenizedEquityBase(base: string): boolean {
   return /^[A-Z]{1,5}(?:B|X|ON)$/.test(asset)
 }
 
-async function coinNames(): Promise<Map<string, string>> {
-  const res = await fetch('https://www.binance.com/bapi/asset/v2/public/asset-service/product/get-products?includeEtf=true', {
-    headers: { 'user-agent': UA, accept: 'application/json' },
-    signal: AbortSignal.timeout(20000),
-  })
-  if (!res.ok) return new Map()
-  const body = (await res.json()) as { data?: Array<{ b?: string; q?: string; an?: string }> }
+export type CoinProduct = { b?: string; q?: string; an?: string; tags?: unknown }
+
+export type CoinBook = {
+  names: Map<string, string>
+  memes: Map<string, string>
+}
+
+type SpotRow = { symbol?: string; status?: string; baseAsset?: string; quoteAsset?: string }
+
+/** DOGEUSDT, DOGE-USDC, and DOGE all share the base Binance tags. */
+export function spotBase(symbol: string): string {
+  return symbol.trim().toUpperCase().replace(/[-_]?(?:USDC|USDT)$/, '')
+}
+
+function memeTagged(tags: unknown): boolean {
+  return Array.isArray(tags) && tags.some((tag) => typeof tag === 'string' && tag.toLowerCase() === 'meme')
+}
+
+function displayName(name: string, base: string): string {
+  const trimmed = name.trim()
+  if (!trimmed || trimmed.toUpperCase() === base.toUpperCase()) return ''
+  return trimmed
+}
+
+export function readCoinBook(rows: CoinProduct[]): CoinBook {
   const names = new Map<string, string>()
-  for (const row of body.data ?? []) {
-    if (row.q !== 'USDT' || !row.b || !row.an) continue
-    const name = row.an.trim()
-    if (!name || name.toUpperCase() === row.b.toUpperCase()) continue
-    names.set(row.b.toUpperCase(), name)
+  const memes = new Map<string, string>()
+  for (const row of rows) {
+    const base = row.b?.trim().toUpperCase()
+    if (!base) continue
+    const named = displayName(row.an ?? '', base)
+    if (row.q === 'USDT' && named) names.set(base, named)
+    if (!memeTagged(row.tags)) continue
+    const current = memes.get(base)
+    if (!current || current.toUpperCase() === base) memes.set(base, named || current || base)
   }
-  return names
+  return { names, memes }
+}
+
+export function isMemeQuery(book: CoinBook, query: string): boolean {
+  const raw = query.trim()
+  if (!raw) return false
+  const upper = raw.toUpperCase()
+  const base = spotBase(raw)
+  if ((base && book.memes.has(base)) || book.memes.has(upper)) return true
+  const lower = raw.toLowerCase()
+  for (const name of book.memes.values()) {
+    if (name.toLowerCase() === lower) return true
+  }
+  return false
+}
+
+/** A multi-word Binance name counts when the note says the whole name. */
+export function mentionsMeme(book: CoinBook, text: string): boolean {
+  if (isMemeQuery(book, text)) return true
+  const padded = ` ${text.toLowerCase()} `
+  for (const name of book.memes.values()) {
+    if (!name.includes(' ')) continue
+    const needle = name.toLowerCase()
+    if (needle.length < 4) continue
+    if (padded.includes(` ${needle} `)) return true
+  }
+  return false
+}
+
+export function spotListings(rows: SpotRow[], book: CoinBook): Listing[] {
+  return rows
+    .flatMap((row) => {
+      if (row.status !== 'TRADING' || !row.symbol || !row.baseAsset) return []
+      if (row.quoteAsset !== 'USDT' && row.quoteAsset !== 'USDC') return []
+      const base = row.baseAsset.toUpperCase()
+      // Binance's Meme tag removes the base from both quotes. Seed alone stays.
+      if (isTokenizedEquityBase(base) || book.memes.has(base)) return []
+      const label = row.quoteAsset === 'USDC' ? `${row.baseAsset}-USDC` : row.baseAsset
+      const name = book.names.get(base) || row.baseAsset
+      return [listing('crypto', row.symbol, name, label)]
+    })
+    .sort((a, b) => a.label.localeCompare(b.label))
+}
+
+async function coinBook(): Promise<CoinBook> {
+  return cached('catalog:coins', 60 * 60 * 1000, async () => {
+    const res = await fetch('https://www.binance.com/bapi/asset/v2/public/asset-service/product/get-products?includeEtf=true', {
+      headers: { 'user-agent': UA, accept: 'application/json' },
+      signal: AbortSignal.timeout(20000),
+    })
+    if (!res.ok) throw new Error(`Binance products ${res.status}`)
+    const body = (await res.json()) as { data?: CoinProduct[] }
+    return readCoinBook(body.data ?? [])
+  })
+}
+
+export async function isRestrictedCoin(query: string): Promise<boolean> {
+  try {
+    return mentionsMeme(await coinBook(), query)
+  } catch {
+    return false
+  }
 }
 
 async function spotCatalog(): Promise<Listing[]> {
   return cached('catalog:spot', 60 * 60 * 1000, async () => {
-    const [res, names] = await Promise.all([
+    const [res, book] = await Promise.all([
       fetch('https://api.binance.com/api/v3/exchangeInfo', { signal: AbortSignal.timeout(20000) }),
-      coinNames().catch(() => new Map<string, string>()),
+      coinBook().catch(() => readCoinBook([])),
     ])
     if (!res.ok) throw new Error(`Binance info ${res.status}`)
-    const body = (await res.json()) as {
-      symbols?: Array<{ symbol?: string; status?: string; baseAsset?: string; quoteAsset?: string }>
-    }
-    return (body.symbols ?? [])
-      .flatMap((row) => {
-        if (row.status !== 'TRADING' || !row.symbol || !row.baseAsset) return []
-        if (row.quoteAsset !== 'USDT' && row.quoteAsset !== 'USDC') return []
-        if (isTokenizedEquityBase(row.baseAsset)) return []
-        const label = row.quoteAsset === 'USDC' ? `${row.baseAsset}-USDC` : row.baseAsset
-        const name = names.get(row.baseAsset.toUpperCase()) || row.baseAsset
-        return [listing('crypto', row.symbol, name, label)]
-      })
-      .sort((a, b) => a.label.localeCompare(b.label))
-  })
-}
-
-type DexPair = {
-  priceUsd?: string
-  liquidity?: { usd?: number }
-  priceChange?: { h24?: number }
-  baseToken?: { address?: string; name?: string; symbol?: string }
-}
-
-async function contractHit(address: string): Promise<{ address: string; label: string; name: string; price: number; changePct: number } | null> {
-  return cached(`ca:${address}`, 10_000, async () => {
-    const res = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${address}`, {
-      headers: { 'user-agent': UA, accept: 'application/json' },
-      signal: AbortSignal.timeout(8000),
-    })
-    if (!res.ok) return null
-    const body = (await res.json()) as { pairs?: DexPair[] }
-    const best = (body.pairs ?? [])
-      .filter((pair) => {
-        const token = pair.baseToken?.address ?? ''
-        const same = address.startsWith('0x') ? token.toLowerCase() === address : token === address
-        const price = Number(pair.priceUsd)
-        return same && Number.isFinite(price) && price > 0
-      })
-      .sort((a, b) => (b.liquidity?.usd ?? 0) - (a.liquidity?.usd ?? 0))[0]
-    const token = best?.baseToken
-    const price = Number(best?.priceUsd)
-    if (!token?.symbol || !Number.isFinite(price)) return null
-    return {
-      address,
-      label: token.symbol.toUpperCase(),
-      name: token.name?.trim() || token.symbol.toUpperCase(),
-      price,
-      changePct: Number(best?.priceChange?.h24) || 0,
-    }
-  })
-}
-
-async function contractQuotes(addresses: string[]): Promise<Quote[]> {
-  const now = Date.now()
-  const rows = await mapPool(addresses, 4, (address) => contractHit(address))
-  return rows.flatMap((row) => {
-    if (!row) return []
-    return [
-      {
-        id: `crypto:${row.address}`,
-        venue: 'crypto' as const,
-        symbol: row.address,
-        name: row.name,
-        price: row.price,
-        change: (row.price * row.changePct) / 100,
-        changePct: row.changePct,
-        marketState: null,
-        asOf: now,
-      },
-    ]
+    const body = (await res.json()) as { symbols?: SpotRow[] }
+    return spotListings(body.symbols ?? [], book)
   })
 }
 
@@ -1002,14 +993,7 @@ function rankListing(item: Listing, needle: string): number {
 }
 
 export async function searchMarket(venue: Venue, query: string): Promise<Listing[]> {
-  const raw = query.trim()
-  if (venue === 'crypto' && isContractAddress(raw)) {
-    const address = contractAddress(raw)
-    if (!address) return []
-    const hit = await contractHit(address).catch(() => null)
-    return hit ? [listing('crypto', hit.address, hit.name, hit.label)] : []
-  }
-  const q = raw.slice(0, 40)
+  const q = query.trim().slice(0, 40)
   if (venue === 'stock') {
     if (q.length < 1) return []
     return cached(`search:stock:${q.toLowerCase()}`, 30000, () => stockSearch(q))

@@ -100,14 +100,20 @@ export async function fetchActivity(token: string, cursor: string | null): Promi
   return parseActivity(await res.json())
 }
 
-export async function sendRefund(token: string, to: string, amountCents: number, paymentId: string): Promise<void> {
+export async function sendRefund(
+  token: string,
+  to: string,
+  amountCents: number,
+  paymentId: string,
+  note = REFUND_NOTE,
+): Promise<void> {
   if (!token) throw named('MissingWriteToken', 'missing_write_token')
   const res = await xitterFetch(token, new URL('/api/v1/money/send', XITTER_ORIGIN), {
     method: 'POST',
     body: JSON.stringify({
       to,
       amount_cents: amountCents,
-      note: REFUND_NOTE,
+      note,
       idempotency_key: idempotencyKey(paymentId),
     }),
   })

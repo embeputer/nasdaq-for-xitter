@@ -3,7 +3,7 @@ import { VENUE_LABEL } from '../data/universe'
 import { AssetMark } from './AssetMark'
 import { formatClock, formatPct, formatPrice, formatQty, formatUsd, pnlClass } from '../lib/format'
 import { marketValue, openPnl } from '../lib/account'
-import type { Viewer } from '../lib/api'
+import { saleFor, type Viewer } from '../lib/api'
 import type { Fill, Position, Quote } from '../types'
 
 function ownedBy(position: Position, screenName: string): boolean {
@@ -65,7 +65,9 @@ export function Portfolio({
     if (pending.current) return
     const price = quotes[`${position.venue}:${position.symbol}`]?.price
     if (cash) {
-      const shown = price && price > 0 ? formatUsd(position.qty * price) : 'the current value'
+      const proceeds = position.venue === 'launch' ? await saleFor(position.symbol, position.qty) : null
+      const dollars = proceeds ?? (price && price > 0 ? position.qty * price : 0)
+      const shown = dollars > 0 ? formatUsd(dollars) : 'the current value'
       if (!window.confirm(`Send ${shown} to @${position.person.screenName} and close this position?`)) return
     } else if (!window.confirm(`Close @${position.person.screenName}'s ${position.label} without sending Equicoins?`)) {
       return

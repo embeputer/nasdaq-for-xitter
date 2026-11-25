@@ -14,10 +14,11 @@ import {
   launchListing as toListing,
   launchQuote as toQuote,
   NOISE_SYMBOL,
+  mintLaunch,
   planBuy,
   planSell,
   planSpend,
-  seedLaunch,
+  quoteSell,
   shockLaunch,
   type Launch,
   type LaunchFailure,
@@ -100,6 +101,7 @@ export type Store = {
   launchListings(query?: string): Promise<Listing[]>
   launchQuote(symbol: string): Promise<Quote | null>
   launchQuotes(symbols: string[]): Promise<Quote[]>
+  launchSale(symbol: string, qty: number): Promise<{ cents: number; fillPrice: number } | null>
   launchCandles(symbol: string, interval: Interval): Promise<Candle[]>
   openLaunch(input: {
     person: Person
@@ -329,6 +331,10 @@ function storeFrom(
       const launch = read().launches[symbol]
       return launch ? toQuote(launch, Date.now()) : null
     },
+    async launchSale(symbol, qty) {
+      const launch = read().launches[symbol]
+      return launch ? quoteSell(launch, qty) : null
+    },
     async launchQuotes(symbols) {
       const now = Date.now()
       return symbols.flatMap((symbol) => {
@@ -388,9 +394,10 @@ function storeFrom(
           return
         }
         const person = { ...input.person, screenName }
-        const launch = seedLaunch(person, symbol, name, amounts.liquidityCents, amounts.investCents, input.now)
+        const minted = mintLaunch(person, symbol, name, amounts.liquidityCents, amounts.investCents, input.now)
+        const launch = minted.launch
         const bought =
-          amounts.investCents > 0
+          minted.qty > 0
             ? fileBuy(doc.positions, {
                 venue: 'launch',
                 symbol,
@@ -398,7 +405,7 @@ function storeFrom(
                 label: launch.label,
                 person,
                 amount: amounts.investCents / 100,
-                price: 1,
+                price: minted.fillPrice,
                 now: input.now,
               })
             : null
@@ -957,6 +964,10 @@ async function postgresStore(url: string): Promise<Store> {
       const rows = await sql<{ body: Launch }[]>`select body from larp_launches where id = ${symbol}`
       return rows[0] ? toQuote(rows[0].body, Date.now()) : null
     },
+    async launchSale(symbol, qty) {
+      const rows = await sql<{ body: Launch }[]>`select body from larp_launches where id = ${symbol}`
+      return rows[0] ? quoteSell(rows[0].body, qty) : null
+    },
     async launchQuotes(symbols) {
       if (!symbols.length) return []
       const rows = await sql<{ body: Launch }[]>`select body from larp_launches where id in ${sql(symbols)}`
@@ -1008,10 +1019,11 @@ async function postgresStore(url: string): Promise<Store> {
         const spent = planSpend(records, amounts.liquidityCents + amounts.investCents)
         if (!spent) return launchFailure('poor')
         const person = { ...input.person, screenName }
-        const launch = seedLaunch(person, symbol, name, amounts.liquidityCents, amounts.investCents, input.now)
+        const minted = mintLaunch(person, symbol, name, amounts.liquidityCents, amounts.investCents, input.now)
+        const launch = minted.launch
         const positions = await tx<{ body: Position }[]>`select body from larp_positions`
         const bought =
-          amounts.investCents > 0
+          minted.qty > 0
             ? fileBuy(positions.map((row) => row.body), {
                 venue: 'launch',
                 symbol,
@@ -1019,7 +1031,7 @@ async function postgresStore(url: string): Promise<Store> {
                 label: launch.label,
                 person,
                 amount: amounts.investCents / 100,
-                price: 1,
+                price: minted.fillPrice,
                 now: input.now,
               })
             : null

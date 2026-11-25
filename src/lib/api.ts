@@ -115,6 +115,13 @@ export async function withdrawFor(amount: number): Promise<{ cents: number; scre
   return { cents: body.cents, screenName: body.screenName, short: body.short === true }
 }
 
+export async function saleFor(symbol: string, qty: number): Promise<number | null> {
+  const res = await fetch(`/api/launches/${encodeURIComponent(symbol)}/sale?qty=${encodeURIComponent(String(qty))}`)
+  if (!res.ok) return null
+  const body = (await res.json().catch(() => ({}))) as { cents?: number }
+  return typeof body.cents === 'number' && body.cents > 0 ? body.cents / 100 : null
+}
+
 export async function closeFor(id: string, cash = true): Promise<{ cash: boolean; cents?: number; screenName?: string }> {
   const res = await fetch('/api/positions/close', {
     method: 'POST',

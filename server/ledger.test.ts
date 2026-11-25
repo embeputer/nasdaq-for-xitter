@@ -6,7 +6,7 @@ import { fileBuy, fileClose } from './book.ts'
 import { ingest } from './ingest.ts'
 import { ACTIVITY_LIMIT, adminNames, idempotencyKey, parseActivity, type Desk, type IncomingPayment } from './money.ts'
 import { pkcePair } from './oauth.ts'
-import { pickListing, isDonationNote, isRefundNote, isVaultNote, queriesFromNote, REFUND_NOTE, resolveNote } from './resolve.ts'
+import { pickListing, isDonationNote, isRefundNote, isRestricted, isVaultNote, queriesFromNote, REFUND_NOTE, RESTRICTED_NOTE, resolveNote } from './resolve.ts'
 import { fileStore, memoryStore } from './store.ts'
 import type { Listing } from './market.ts'
 
@@ -30,6 +30,12 @@ describe('refund note', () => {
       'Sorry, i couldn\'t find that! Make sure you specify an available stock or crypto market. If donating, enter "donate" in the note.',
     )
     expect(REFUND_NOTE.length).toBeLessThanOrEqual(140)
+    expect(RESTRICTED_NOTE).toBe("Sorry, that coin isn't available.")
+    expect(RESTRICTED_NOTE.length).toBeLessThanOrEqual(140)
+    expect(isRefundNote(RESTRICTED_NOTE)).toBe(true)
+    expect(queriesFromNote(RESTRICTED_NOTE)).toEqual([])
+    expect(isDonationNote(RESTRICTED_NOTE)).toBe(false)
+    expect(isVaultNote(RESTRICTED_NOTE)).toBe(false)
     expect(
       isRefundNote(
         'Sorry, i couldn\'t find that! Make sure you specify an available stock, crypto, or perpetual market. If donating, enter "donate" in the note.',
@@ -92,37 +98,54 @@ describe('ticker notes', () => {
     ]
     const search = async (venue: Listing['venue'], query: string) =>
       listings.filter((item) => item.venue === venue && `${item.symbol} ${item.name} ${item.label}`.toLowerCase().includes(query.toLowerCase()))
-    expect((await resolveNote('oracle', search))?.id).toBe('stock:ORCL')
-    expect((await resolveNote('NVDA', search))?.id).toBe('stock:NVDA')
-    expect((await resolveNote('BTC', search))?.id).toBe('crypto:BTCUSDT')
-    expect((await resolveNote('ETH', search))?.id).toBe('crypto:ETHUSDT')
-    expect((await resolveNote('sol', search))?.id).toBe('crypto:SOLUSDT')
-    expect((await resolveNote('DOGE', search))?.id).toBe('crypto:DOGEUSDT')
-    expect((await resolveNote('XRP', search))?.id).toBe('crypto:XRPUSDC')
-    expect((await resolveNote('$BTC', search))?.id).toBe('stock:BTC')
-    expect((await resolveNote('stock:ETH', search))?.id).toBe('stock:ETH')
-    expect(await resolveNote('BTC-PERP', search)).toBeNull()
-    expect(await resolveNote('nope', search)).toBeNull()
+    const memes = new Set(['doge', 'dogecoin', 'pepe', 'shiba inu'])
+    const restricted = (query: string) => memes.has(query.trim().toLowerCase())
+    const id = async (note: string) => {
+      const hit = await resolveNote(note, search, async () => null, restricted)
+      return hit && 'id' in hit ? hit.id : null
+    }
+    expect(await id('oracle')).toBe('stock:ORCL')
+    expect(await id('NVDA')).toBe('stock:NVDA')
+    expect(await id('BTC')).toBe('crypto:BTCUSDT')
+    expect(await id('ETH')).toBe('crypto:ETHUSDT')
+    expect(await id('sol')).toBe('crypto:SOLUSDT')
+    expect(isRestricted(await resolveNote('DOGE', search, async () => null, restricted))).toBe(true)
+    expect(isRestricted(await resolveNote('Dogecoin', search, async () => null, restricted))).toBe(true)
+    expect(isRestricted(await resolveNote('please DOGE', search, async () => null, restricted))).toBe(true)
+    expect(isRestricted(await resolveNote('crypto:DOGE', search, async () => null, restricted))).toBe(true)
+    expect(await id('XRP')).toBe('crypto:XRPUSDC')
+    expect(await id('$BTC')).toBe('stock:BTC')
+    expect(await id('$DOGE')).toBe('stock:DOGE')
+    expect(await id('stock:DOGE')).toBe('stock:DOGE')
+    expect(await id('stock:ETH')).toBe('stock:ETH')
+    expect(await resolveNote('BTC-PERP', search, async () => null, restricted)).toBeNull()
+    expect(await resolveNote('nope', search, async () => null, restricted)).toBeNull()
+    expect(await resolveNote('0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48', search, async () => null, restricted)).toBeNull()
   })
 
-  it('resolves a company name, a coin name, and a contract address', async () => {
+  it('resolves a company name and a coin name, and ignores a contract address', async () => {
     const usdc = '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48'
     expect(queriesFromNote('Anthropic')).toEqual([{ venue: null, query: 'Anthropic' }])
     expect(queriesFromNote('Bitcoin')).toEqual([{ venue: null, query: 'Bitcoin' }])
-    expect(queriesFromNote(usdc)).toEqual([{ venue: 'crypto', query: usdc }])
+    expect(queriesFromNote(usdc)).toEqual([])
+    expect(queriesFromNote(`buy ${usdc}`)).toEqual([])
     const listings: Listing[] = [
       { id: 'stock:ANT', venue: 'stock', symbol: 'ANT', label: 'ANT', name: 'Anthropic, PBC Class A Common Stock' },
       { id: 'stock:ANTW', venue: 'stock', symbol: 'ANTW', label: 'ANTW', name: 'Anthropic AI Lab Ecosystem ETF' },
       { id: 'stock:BIXI', venue: 'stock', symbol: 'BIXI', label: 'BIXI', name: 'Bitcoin Infrastructure Acquisition Corp Ltd.' },
       { id: 'crypto:BTCUSDT', venue: 'crypto', symbol: 'BTCUSDT', label: 'BTC', name: 'Bitcoin' },
-      { id: `crypto:${usdc}`, venue: 'crypto', symbol: usdc, label: 'USDC', name: 'USD Coin' },
     ]
     expect(pickListing(listings.filter((item) => item.venue === 'stock'), 'Anthropic', 'stock')?.symbol).toBe('ANT')
     const search = async (venue: Listing['venue'], query: string) =>
       listings.filter((item) => item.venue === venue && (item.symbol === query || `${item.symbol} ${item.name} ${item.label}`.toLowerCase().includes(query.toLowerCase())))
-    expect((await resolveNote('Anthropic', search))?.id).toBe('stock:ANT')
-    expect((await resolveNote('Bitcoin', search))?.id).toBe('crypto:BTCUSDT')
-    expect((await resolveNote(usdc, search))?.id).toBe(`crypto:${usdc}`)
+    const id = async (note: string) => {
+      const hit = await resolveNote(note, search)
+      return hit && 'id' in hit ? hit.id : null
+    }
+    expect(await id('Anthropic')).toBe('stock:ANT')
+    expect(await id('Bitcoin')).toBe('crypto:BTCUSDT')
+    expect(await resolveNote(usdc, search)).toBeNull()
+    expect(await resolveNote('DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263', search)).toBeNull()
   })
 })
 
@@ -204,6 +227,37 @@ describe('ingest', () => {
     const fourth = await run([payment('3', 'NVDA', 5000)])
     expect(fourth.filled).toBe(0)
     expect((await ledger.positions())[0]?.qty).toBe(2)
+  })
+
+  it('refunds a restricted coin with its own apology', async () => {
+    const ledger = memoryStore()
+    const notes: Array<string | undefined> = []
+    const run = (rows: IncomingPayment[]) =>
+      ingest({
+        store: ledger,
+        desks: [desk],
+        now: 10,
+        activity: async () => ({ payments: rows, next: null }),
+        resolve: async (note) => {
+          if (note === 'DOGE' || note === 'Dogecoin') return { restricted: true }
+          if (note === '$DOGE') return { id: 'stock:DOGE', venue: 'stock', symbol: 'DOGE', label: 'DOGE', name: 'Dogecoin Trust' }
+          return null
+        },
+        quote: async () => 25,
+        refund: async (_token, _to, _amount, _id, note) => {
+          notes.push(note)
+        },
+      })
+    await run([payment('1', 'OLD')])
+    const result = await run([payment('1', 'OLD'), payment('2', 'DOGE'), payment('3', 'ZZZZ'), payment('4', '$DOGE', 1000)])
+    expect(result.refunded).toBe(2)
+    expect(result.filled).toBe(1)
+    expect(notes).toEqual([RESTRICTED_NOTE, REFUND_NOTE])
+    expect((await ledger.payment('2'))?.status).toBe('refunded')
+    expect((await ledger.payment('2'))?.detail).toBe('restricted')
+    expect((await ledger.payment('3'))?.detail).toBe('refunded')
+    expect((await ledger.positions()).map((position) => position.symbol)).toEqual(['DOGE'])
+    expect(await ledger.vaultCents('ada')).toBe(0)
   })
 
   it('keeps only the newest 10 payments in a run', async () => {
@@ -350,10 +404,11 @@ describe('ingest', () => {
     expect(opened.launch.label).toBe('xitYAMS')
     expect(opened.launch.name).toBe('Yams')
     expect(opened.launch.cashCents).toBe(2000)
-    expect(opened.launch.supply).toBe(10)
-    expect(opened.launch.price).toBe(1)
+    expect(opened.launch.supply).toBeCloseTo(5)
+    expect(opened.launch.price).toBeCloseTo(4)
     expect(await ledger.vaultCents('ada')).toBe(3000)
-    expect((await ledger.positions())[0]?.qty).toBe(10)
+    expect((await ledger.positions())[0]?.qty).toBeCloseTo(5)
+    expect((await ledger.positions())[0]?.avgPrice).toBeCloseTo(2)
     expect((await ledger.payments()).find((row) => row.id === 'ugs-YAMS-nasdaq')?.amountCents).toBe(1000)
     const poor = await ledger.openLaunch({
       person: sender,
@@ -379,10 +434,12 @@ describe('ingest', () => {
     expect(bought.filled).toBe(1)
     expect(bought.refunded).toBe(0)
     const quote = await ledger.launchQuote('YAMS')
-    expect(quote?.price).toBeCloseTo(20 / 19)
+    expect(quote?.price).toBeCloseTo(9)
     expect(quote?.creator).toBe('ada')
     const bobPosition = (await ledger.positions()).find((position) => position.person.screenName === 'bob')
-    expect(bobPosition?.qty).toBeCloseTo(9)
+    expect(bobPosition?.qty).toBeCloseTo(5 / 3)
+    expect(bobPosition?.avgPrice).toBeCloseTo(6)
+    expect(bobPosition!.qty * quote!.price).toBeCloseTo(15)
     expect(bobPosition?.label).toBe('xitYAMS')
 
     const missed = await run(
@@ -397,15 +454,16 @@ describe('ingest', () => {
     )
     expect(missed.refunded).toBe(2)
     expect(missed.filled).toBe(0)
-    expect((await ledger.launchQuote('YAMS'))?.price).toBeCloseTo(20 / 19)
+    expect((await ledger.launchQuote('YAMS'))?.price).toBeCloseTo(9)
     const ada = (await ledger.positions()).find((position) => position.person.screenName === 'ada')
-    expect(ada?.qty).toBe(10)
+    expect(ada?.qty).toBeCloseTo(5)
     if (!ada || !quote) return
+    expect(ada.qty * quote.price).toBeCloseTo(45)
     const cents = Math.round(ada.qty * quote.price * 100)
     await ledger.settleLaunch(ada, cents)
     await ledger.settleLaunch(ada, cents)
     const left = await ledger.launchQuote('YAMS')
-    expect(left?.price).toBeCloseTo(20 / 19, 5)
+    expect(left?.price).toBeCloseTo(1.44)
   })
 
   it('locks liquidity without opening a position', async () => {

@@ -11,6 +11,7 @@ import {
   planSell,
   planSpend,
   priceOf,
+  quoteSell,
   rollShock,
   filterLaunchListings,
   seedLaunch,
@@ -20,41 +21,56 @@ import {
 const ada = { id: '9', screenName: 'ada', name: 'Ada', avatarUrl: null }
 
 describe('user stocks', () => {
-  it('keeps liquidity in the fund and lifts 10% of the next buy', () => {
-    const seeded = seedLaunch(ada, 'YAMS', 'Yams', 10_000, 10_000, 10)
+  it('buys up the curve and sells back down it', () => {
+    const seeded = seedLaunch(ada, 'YAMS', 'Yams', 10_000, 0, 10)
     expect(seeded.label).toBe('xitYAMS')
-    expect(seeded.cashCents).toBe(20_000)
-    expect(seeded.supply).toBe(100)
+    expect(seeded.cashCents).toBe(10_000)
+    expect(seeded.reserve).toBe(100)
+    expect(seeded.supply).toBe(0)
     expect(priceOf(seeded)).toBe(1)
     expect(cleanLaunchSymbol('xitYAMS')).toBe('YAMS')
     expect(cleanLaunchSymbol('y')).toBeNull()
     const bought = planBuy(seeded, 10_000, 20)
     expect(bought).not.toBeNull()
-    expect(bought?.qty).toBeCloseTo(90)
-    expect(bought?.launch.cashCents).toBe(30_000)
-    expect(bought?.launch.supply).toBeCloseTo(190)
-    expect(priceOf(bought!.launch)).toBeCloseTo(20 / 19)
-    const payout = Math.round(100 * priceOf(bought!.launch) * 100)
-    const sold = planSell(bought!.launch, 100, payout, 30)
-    expect(sold.supply).toBeCloseTo(90)
-    expect(priceOf(sold)).toBeCloseTo(20 / 19)
-    expect(sold.cashCents + payout).toBe(30_000)
+    expect(bought?.qty).toBeCloseTo(50)
+    expect(bought?.fillPrice).toBeCloseTo(2)
+    expect(priceOf(bought!.launch)).toBeCloseTo(4)
+    expect(bought!.qty * bought!.fillPrice).toBeCloseTo(100)
+    expect(bought!.qty * priceOf(bought!.launch)).toBeCloseTo(200)
+    expect(bought?.launch.cashCents).toBe(20_000)
+    expect(bought?.launch.reserve).toBeCloseTo(50)
+    expect(bought?.launch.supply).toBeCloseTo(50)
+    const again = planBuy(bought!.launch, 10_000, 25)
+    expect(priceOf(again!.launch)).toBeCloseTo(9)
+    expect(bought!.qty * priceOf(again!.launch)).toBeCloseTo(450)
+    const half = quoteSell(bought!.launch, bought!.qty / 2)
+    const dumped = planSell(bought!.launch, bought!.qty / 2, half!.cents, 30)
+    expect(priceOf(dumped)).toBeGreaterThan(1)
+    expect(priceOf(dumped)).toBeLessThan(4)
+    const sale = quoteSell(bought!.launch, bought!.qty)
+    expect(sale?.cents).toBe(10_000)
+    const sold = planSell(bought!.launch, bought!.qty, sale!.cents, 40)
+    expect(sold.supply).toBe(0)
+    expect(priceOf(sold)).toBeCloseTo(1)
+    expect(sold.cashCents).toBe(10_000)
+    expect(sold.reserve).toBeCloseTo(100)
+    const legacy = { ...seeded }
+    delete legacy.reserve
+    const inferred = planBuy(legacy, 10_000, 20)
+    expect(priceOf(inferred!.launch)).toBeCloseTo(4)
+    expect(inferred?.fillPrice).toBeCloseTo(2)
   })
 
-  it('quotes $1 with no shares until the first buy', () => {
-    const seeded = seedLaunch(ada, 'YAMS', 'Yams', 10_000, 0, 10)
-    expect(seeded.supply).toBe(0)
-    expect(seeded.cashCents).toBe(10_000)
-    expect(priceOf(seeded)).toBe(1)
+  it('opens an invest on the same curve', () => {
+    const seeded = seedLaunch(ada, 'YAMS', 'Yams', 10_000, 10_000, 10)
+    expect(seeded.supply).toBeCloseTo(50)
+    expect(seeded.cashCents).toBe(20_000)
+    expect(priceOf(seeded)).toBeCloseTo(4)
     const bought = planBuy(seeded, 10_000, 20)
-    expect(bought?.qty).toBeCloseTo(90)
-    expect(bought?.launch.cashCents).toBe(20_000)
-    expect(priceOf(bought!.launch)).toBeCloseTo(100 / 90)
-    const payout = Math.round(bought!.qty * priceOf(bought!.launch) * 100)
-    const sold = planSell(bought!.launch, bought!.qty, payout, 30)
-    expect(sold.supply).toBe(0)
-    expect(priceOf(sold)).toBe(1)
-    expect(sold.cashCents).toBe(10_000)
+    expect(bought?.qty).toBeCloseTo(50 / 3)
+    expect(bought?.fillPrice).toBeCloseTo(6)
+    expect(priceOf(bought!.launch)).toBeCloseTo(9)
+    expect(seeded.supply * priceOf(bought!.launch)).toBeCloseTo(450)
   })
 
   it('walks Noise at a random size and prints it onto the candles', () => {

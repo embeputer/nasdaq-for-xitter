@@ -111,6 +111,8 @@ describe('launch logos', () => {
     )
     const after = await ledger.launchQuote('YAMS')
     expect(after?.logo).toBe('/api/logos/YAMS?v=2')
+    expect(after?.price).toBeCloseTo(4)
     expect(after?.price).not.toBe(price)
+    expect((await ledger.positions()).find((position) => position.person.screenName === 'bob')?.qty).toBeCloseTo(5)
   })
 })

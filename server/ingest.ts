@@ -1,6 +1,6 @@
-import { samePerson, type Person } from './book.ts'
+import { samePerson, type Person, type Position } from './book.ts'
 import { parseCommand, retrySkippedAmount, WITHDRAW_NOTE, withdrawKey } from './commands.ts'
-import { getQuotes, searchMarket, type Listing } from './market.ts'
+import { getQuotes, isRestrictedCoin, searchMarket, spotBase, type Listing } from './market.ts'
 import {
   ACTIVITY_LIMIT,
   fetchActivity,
@@ -16,7 +16,7 @@ import {
   type MentionPost,
 } from './money.ts'
 import { deskKey } from './padding.ts'
-import { isDonationNote, isRefundNote, isVaultNote, resolveNote } from './resolve.ts'
+import { isDonationNote, isRefundNote, isRestricted, isVaultNote, REFUND_NOTE, RESTRICTED_NOTE, resolveNote, type RestrictedHit } from './resolve.ts'
 import { store as openLedger, type PaymentRow, type Store } from './store.ts'
 import type { Mention } from './tag.ts'
 
@@ -34,7 +34,7 @@ type ActivityFn = (
   token: string,
   cursor: string | null,
 ) => Promise<{ payments: IncomingPayment[]; next: string | null; earnings?: LikeDay[] }>
-type RefundFn = (token: string, to: string, amountCents: number, paymentId: string) => Promise<void>
+type RefundFn = (token: string, to: string, amountCents: number, paymentId: string, note?: string) => Promise<void>
 type WalletFn = (token: string) => Promise<{ balanceCents: number; maxCents?: number } | null>
 type MentionFn = (token: string, desk: string) => Promise<MentionPost[]>
 type ReplyFn = (token: string, postId: string, text: string) => Promise<void>
@@ -44,7 +44,7 @@ type Deps = {
   store: Store
   desks: Desk[]
   activity: ActivityFn
-  resolve: (note: string) => Promise<Listing | null>
+  resolve: (note: string) => Promise<Listing | RestrictedHit | null>
   quote: (id: string) => Promise<number | null>
   refund: RefundFn
   wallet?: WalletFn
@@ -60,7 +60,7 @@ export async function runIngest(): Promise<IngestSummary> {
     store: ledger,
     desks: await loadDesks(),
     activity: fetchActivity,
-    resolve: (note) => resolveNote(note, searchMarket, (symbol) => ledger.launchListing(symbol)),
+    resolve: (note) => resolveNote(note, searchMarket, (symbol) => ledger.launchListing(symbol), isRestrictedCoin),
     quote: async (id) => {
       const [quote] = await getQuotes([id])
       return quote && quote.price > 0 ? quote.price : null
@@ -134,7 +134,15 @@ async function settle(deps: Deps, desk: Desk, draft: PaymentRow, sender: Person)
     await deps.store.creditVault({ ...draft, status: 'vaulted', detail: 'vault', updatedAt: deps.now }, sender)
     return 'vaulted'
   }
-  let listing = storedListing(draft.detail) ?? (await deps.resolve(draft.note))
+  let listing = storedListing(draft.detail)
+  let restricted = false
+  if (!listing || listing.venue === 'crypto') {
+    const found = await deps.resolve(draft.note)
+    if (isRestricted(found)) {
+      restricted = true
+      listing = null
+    } else if (!listing && found) listing = found
+  }
   if (listing?.venue === 'launch') {
     try {
       const bought = await deps.store.buyLaunch(draft, sender, listing.symbol, deps.now)
@@ -145,16 +153,8 @@ async function settle(deps: Deps, desk: Desk, draft: PaymentRow, sender: Person)
     }
     listing = null
   }
-  if (!listing || listing.venue === 'perpetual') {
-    try {
-      await deps.refund(desk.writeToken || desk.readToken, sender.screenName, draft.amountCents, draft.id)
-      await deps.store.finishPayment({ ...draft, status: 'refunded', detail: 'refunded', updatedAt: deps.now })
-      return 'refunded'
-    } catch (error) {
-      const reason = error instanceof Error && error.name === 'ReadOnlyToken' ? 'read_only' : 'refund_failed'
-      await deps.store.finishPayment({ ...draft, status: 'pending_refund', detail: reason, updatedAt: deps.now })
-      return 'pending'
-    }
+  if (restricted || !listing || listing.venue === 'perpetual') {
+    return refundPayment(deps, desk, draft, sender, restricted ? RESTRICTED_NOTE : REFUND_NOTE)
   }
   const price = await deps.quote(listing.id)
   if (!(price && price > 0)) {
@@ -177,6 +177,39 @@ async function settle(deps: Deps, desk: Desk, draft: PaymentRow, sender: Person)
     return 'pending'
   }
   return 'filled'
+}
+
+async function refundPayment(
+  deps: Deps,
+  desk: Desk,
+  draft: PaymentRow,
+  sender: Person,
+  note: string,
+): Promise<keyof IngestSummary> {
+  try {
+    await deps.refund(desk.writeToken || desk.readToken, sender.screenName, draft.amountCents, draft.id, note)
+    await deps.store.finishPayment({
+      ...draft,
+      status: 'refunded',
+      detail: note === RESTRICTED_NOTE ? 'restricted' : 'refunded',
+      updatedAt: deps.now,
+    })
+    return 'refunded'
+  } catch (error) {
+    const reason = error instanceof Error && error.name === 'ReadOnlyToken' ? 'read_only' : 'refund_failed'
+    await deps.store.finishPayment({ ...draft, status: 'pending_refund', detail: reason, updatedAt: deps.now })
+    return 'pending'
+  }
+}
+
+function heldCrypto(positions: Position[], screenName: string, query: string): Position | null {
+  const wanted = spotBase(query)
+  const name = query.trim().toLowerCase()
+  const hits = positions.filter((position) => {
+    if (position.venue !== 'crypto' || !samePerson(position.person.screenName, screenName)) return false
+    return spotBase(position.symbol) === wanted || position.label.toLowerCase() === name || position.name.toLowerCase() === name
+  })
+  return hits.find((position) => position.symbol.toUpperCase().endsWith('USDT')) ?? hits[0] ?? null
 }
 
 function storedListing(detail: string): Listing | null {
@@ -314,19 +347,27 @@ async function settlePost(
   }
   let listing: Listing | null = null
   let price: number | null = null
+  let restricted = false
   if (command.kind !== 'withdraw') {
+    let found: Listing | RestrictedHit | null = null
     try {
-      listing = await deps.resolve(command.query)
+      found = await deps.resolve(command.query)
     } catch (error) {
       console.error('mentions', error instanceof Error ? error.message : 'failed')
       return 0
     }
-    if (!listing || listing.venue === 'perpetual') listing = null
-    else if (listing.venue === 'launch') {
+    if (isRestricted(found)) {
+      if (command.kind === 'sell') {
+        const held = heldCrypto(await deps.store.positions(), screenName, command.query)
+        if (held) listing = { id: `${held.venue}:${held.symbol}`, venue: held.venue, symbol: held.symbol, name: held.name, label: held.label }
+        else restricted = true
+      } else restricted = true
+    } else if (found && found.venue !== 'perpetual') listing = found
+    if (listing?.venue === 'launch') {
       const quote = await deps.store.launchQuote(listing.symbol)
       if (!quote) listing = null
       else price = quote.price
-    } else {
+    } else if (listing) {
       try {
         price = await deps.quote(listing.id)
       } catch (error) {
@@ -354,6 +395,7 @@ async function settlePost(
     listing: listing ? { venue: listing.venue, symbol: listing.symbol, name: listing.name, label: listing.label } : null,
     price,
     sendRoom,
+    restricted,
     now: deps.now,
   })
   if (result.action === 'reply') {

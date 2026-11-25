@@ -7,6 +7,9 @@ export type Launch = {
   label: string
   creator: Person
   cashCents: number
+  // Shares still sitting in the pool. Spot is cash divided by this reserve.
+  // Missing on launches opened before the curve; those infer it from cash and price.
+  reserve?: number
   supply: number
   price: number
   prevPrice: number
@@ -46,9 +49,6 @@ export function launchAmounts(
   return { liquidityCents, investCents }
 }
 
-// 10% of a later buy stays in the pool and lifts the price. The rest mints shares at the old price.
-const LIFT = 10
-
 export function cleanLaunchSymbol(raw: string): string | null {
   const trimmed = raw.trim().replace(/\s+/g, '')
   const prefixed = trimmed.match(/^xit([A-Za-z]{2,8})$/i)
@@ -81,19 +81,58 @@ export function seedLaunch(
   investCents: number,
   now: number,
 ): Launch {
+  return mintLaunch(person, symbol, name, liquidityCents, investCents, now).launch
+}
+
+// Liquidity is both sides of the pool, so the spot starts at $1. An invest is the first buy on that curve.
+export function mintLaunch(
+  person: Person,
+  symbol: string,
+  name: string,
+  liquidityCents: number,
+  investCents: number,
+  now: number,
+): { launch: Launch; qty: number; fillPrice: number } {
   const screenName = person.screenName.trim().replace(/^@/, '')
-  return {
+  const pool: Launch = {
     symbol,
     name,
     label: launchLabel(symbol),
     creator: { ...person, screenName },
-    cashCents: liquidityCents + investCents,
-    supply: investCents / 100,
+    cashCents: liquidityCents,
+    reserve: liquidityCents > 0 ? liquidityCents / 100 : 0,
+    supply: 0,
     price: 1,
     prevPrice: 1,
     openedAt: now,
     prints: [{ time: now, price: 1 }],
   }
+  if (!(investCents > 0)) return { launch: pool, qty: 0, fillPrice: 1 }
+  const bought = planBuy(pool, investCents, now)
+  if (!bought) return { launch: pool, qty: 0, fillPrice: 1 }
+  return { launch: bought.launch, qty: bought.qty, fillPrice: bought.fillPrice }
+}
+
+// Constant product, the curve pump.fun and PumpSwap use: cash in the pool times shares in the pool stays fixed.
+// A buy lifts the spot above the average fill. A sell walks that move back down and pays the cash the curve gives up.
+function curveReserve(launch: Launch): number {
+  if (launch.creator.id === NOISE_ID) return 0
+  if (typeof launch.reserve === 'number') return launch.reserve > 0 && Number.isFinite(launch.reserve) ? launch.reserve : 0
+  const price = priceOf(launch)
+  if (!(price > 0) || !(launch.cashCents > 0)) return 0
+  return launch.cashCents / 100 / price
+}
+
+export function quoteSell(launch: Launch, qty: number): { cents: number; fillPrice: number } | null {
+  const price = priceOf(launch)
+  if (!(price > 0) || !(qty > 0) || !Number.isFinite(qty)) return null
+  const reserve = curveReserve(launch)
+  const cents =
+    reserve > 0 && launch.cashCents > 1
+      ? Math.min(launch.cashCents - 1, Math.round((launch.cashCents * qty) / (reserve + qty)))
+      : Math.min(launch.cashCents, Math.round(qty * price * 100))
+  if (!Number.isSafeInteger(cents) || cents < 1) return null
+  return { cents, fillPrice: cents / 100 / qty }
 }
 
 export function planBuy(
@@ -104,23 +143,35 @@ export function planBuy(
   if (!Number.isSafeInteger(payCents) || payCents < 1) return null
   const price = priceOf(launch)
   if (!(price > 0)) return null
-  const liftCents = Math.min(payCents - 1, Math.max(0, Math.round(payCents / LIFT)))
-  const mintCents = payCents - liftCents
-  const qty = mintCents / 100 / price
-  if (!(qty > 0) || !Number.isFinite(qty)) return null
-  const fillPrice = payCents / 100 / qty
-  const cashCents = launch.cashCents + payCents
-  const supply = launch.supply + qty
-  const navCents = Math.round(price * launch.supply * 100) + payCents
-  const nextPrice = navCents / 100 / supply
-  if (!(nextPrice > 0) || !Number.isFinite(nextPrice)) return null
+  const reserve = curveReserve(launch)
+  if (!(reserve > 0) || !(launch.cashCents > 0)) {
+    const qty = payCents / 100 / price
+    if (!(qty > 0) || !Number.isFinite(qty)) return null
+    return {
+      qty,
+      fillPrice: price,
+      launch: {
+        ...launch,
+        cashCents: launch.cashCents + payCents,
+        supply: launch.supply + qty,
+        prevPrice: price,
+        prints: pushPrint(launch.prints, now, price),
+      },
+    }
+  }
+  const nextReserve = (reserve * launch.cashCents) / (launch.cashCents + payCents)
+  const qty = reserve - nextReserve
+  const nextCash = launch.cashCents + payCents
+  const nextPrice = nextCash / 100 / nextReserve
+  if (!(qty > 0) || !Number.isFinite(qty) || !(nextPrice > 0) || !Number.isFinite(nextPrice)) return null
   return {
     qty,
-    fillPrice,
+    fillPrice: payCents / 100 / qty,
     launch: {
       ...launch,
-      cashCents,
-      supply,
+      cashCents: nextCash,
+      reserve: nextReserve,
+      supply: launch.supply + qty,
       price: nextPrice,
       prevPrice: price,
       prints: pushPrint(launch.prints, now, nextPrice),
@@ -129,13 +180,22 @@ export function planBuy(
 }
 
 export function planSell(launch: Launch, qty: number, cents: number, now: number): Launch {
-  const taken = Number.isSafeInteger(cents) && cents > 0 ? Math.min(cents, launch.cashCents) : 0
-  const supply = Math.max(0, launch.supply - (qty > 0 && Number.isFinite(qty) ? qty : 0))
+  const selling = qty > 0 && Number.isFinite(qty) ? qty : 0
+  const reserve = curveReserve(launch)
+  const fair = selling > 0 ? quoteSell(launch, selling) : null
+  const requested = Number.isSafeInteger(cents) && cents > 0 ? cents : 0
+  const taken = Math.min(launch.cashCents, fair ? Math.min(fair.cents, requested) : 0)
+  const supply = Math.max(0, launch.supply - (taken > 0 || reserve <= 0 ? selling : 0))
   const dust = supply < 1e-8
-  const price = dust && launch.creator.id !== NOISE_ID ? 1 : launch.price
+  const moved = reserve > 0 && selling > 0 && taken > 0
+  const nextReserve = moved ? reserve + selling : reserve
+  const nextCash = launch.cashCents - taken
+  const priced = moved && nextCash > 0 && nextReserve > 0 ? nextCash / 100 / nextReserve : launch.price
+  const price = dust && reserve <= 0 && launch.creator.id !== NOISE_ID ? 1 : priced
   return {
     ...launch,
-    cashCents: launch.cashCents - taken,
+    cashCents: nextCash,
+    reserve: reserve > 0 ? nextReserve : launch.reserve,
     supply: dust ? 0 : supply,
     price,
     prevPrice: launch.price > 0 ? launch.price : launch.prevPrice,
