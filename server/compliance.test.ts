@@ -30,6 +30,6 @@ describe('compliance', () => {
     expect(isCompliant(meta, '')).toBe(false)
   })
   it('carries the disclaimer note pointing at the app', () => {
-    expect(DISCLAIMER_NOTE).toBe('Please accept our disclaimer at nqfx.embie.tech')
+    expect(DISCLAIMER_NOTE).toBe('Please accept our disclaimer at nqfx.embie.tech/disclaimer')
   })
 })

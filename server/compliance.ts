@@ -1,7 +1,7 @@
 import { cleanModUser } from './moderation.ts'
 
 export const COMPLIANT_USERS_KEY = 'compliance:disclaimer'
-export const DISCLAIMER_URL = 'nqfx.embie.tech'
+export const DISCLAIMER_URL = 'nqfx.embie.tech/disclaimer'
 export const DISCLAIMER_NOTE = `Please accept our disclaimer at ${DISCLAIMER_URL}`
 
 export type ComplianceState = {

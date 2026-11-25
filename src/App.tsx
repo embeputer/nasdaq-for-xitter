@@ -243,7 +243,12 @@ export default function App() {
             out. Nothing here is real money, financial advice, or a chance to win anything of value.
           </p>
           <p className="hint login-copy">
-            By accepting, you confirm you understand this is a game and agree to the disclaimer at nqfx.embie.tech.
+            Real company names and prices are shown for simulation only; NQFX is not affiliated with or endorsed by any of them.
+            Access may be restricted if we detect harmful patterns in usage. Full text at{' '}
+            <a href="/disclaimer">nqfx.embie.tech/disclaimer</a>.
+          </p>
+          <p className="hint login-copy">
+            By accepting, you confirm you understand this is a game and agree to the disclaimer and terms.
           </p>
           <button type="button" className="invest login-link" disabled={accepting} onClick={() => void accept()}>
             {accepting ? 'Accepting…' : 'I accept the disclaimer'}

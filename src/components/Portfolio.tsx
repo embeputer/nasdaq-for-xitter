@@ -101,6 +101,7 @@ export function Portfolio({
               venue={position.venue}
               symbol={position.symbol}
               label={position.label}
+              name={position.name}
               logo={quotes[`${position.venue}:${position.symbol}`]?.logo}
             />
             <span>
