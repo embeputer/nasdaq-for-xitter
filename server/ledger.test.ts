@@ -6,7 +6,7 @@ import { fileBuy, fileClose } from './book.ts'
 import { ingest } from './ingest.ts'
 import { ACTIVITY_LIMIT, adminNames, idempotencyKey, parseActivity, type Desk, type IncomingPayment } from './money.ts'
 import { pkcePair } from './oauth.ts'
-import { pickListing, isDonationNote, isRefundNote, isRestricted, isVaultNote, queriesFromNote, REFUND_NOTE, RESTRICTED_NOTE, resolveNote } from './resolve.ts'
+import { pickListing, isDonationNote, isRefundNote, isRestricted, isVaultNote, queriesFromNote, REFUND_NOTE, RESTRICTED_NOTE, RESTRICTED_STOCK_NOTE, resolveNote } from './resolve.ts'
 import { fileStore, memoryStore } from './store.ts'
 import type { Listing } from './market.ts'
 
@@ -36,6 +36,11 @@ describe('refund note', () => {
     expect(queriesFromNote(RESTRICTED_NOTE)).toEqual([])
     expect(isDonationNote(RESTRICTED_NOTE)).toBe(false)
     expect(isVaultNote(RESTRICTED_NOTE)).toBe(false)
+    expect(RESTRICTED_STOCK_NOTE).toBe("Sorry, that stock isn't available.")
+    expect(RESTRICTED_STOCK_NOTE.length).toBeLessThanOrEqual(140)
+    expect(isRefundNote(RESTRICTED_STOCK_NOTE)).toBe(true)
+    expect(queriesFromNote(RESTRICTED_STOCK_NOTE)).toEqual([])
+    expect(isDonationNote(RESTRICTED_STOCK_NOTE)).toBe(false)
     expect(
       isRefundNote(
         'Sorry, i couldn\'t find that! Make sure you specify an available stock, crypto, or perpetual market. If donating, enter "donate" in the note.',
@@ -89,6 +94,11 @@ describe('ticker notes', () => {
       { id: 'stock:DOGE', venue: 'stock', symbol: 'DOGE', label: 'DOGE', name: 'Dogecoin Trust' },
       { id: 'stock:XRP', venue: 'stock', symbol: 'XRP', label: 'XRP', name: 'XRP Trust' },
       { id: 'stock:NVDA', venue: 'stock', symbol: 'NVDA', label: 'NVDA', name: 'NVIDIA Corporation' },
+      { id: 'stock:IBIT', venue: 'stock', symbol: 'IBIT', label: 'IBIT', name: 'iShares Bitcoin Trust ETF Shares' },
+      { id: 'stock:COIN', venue: 'stock', symbol: 'COIN', label: 'COIN', name: 'Coinbase Global, Inc. Class A Common Stock' },
+      { id: 'stock:ABTC', venue: 'stock', symbol: 'ABTC', label: 'ABTC', name: 'American Bitcoin Corp. Class A Common Stock' },
+      { id: 'stock:BIXI', venue: 'stock', symbol: 'BIXI', label: 'BIXI', name: 'Bitcoin Infrastructure Acquisition Corp Ltd.' },
+      { id: 'stock:MSTR', venue: 'stock', symbol: 'MSTR', label: 'MSTR', name: 'Strategy Inc Common Stock Class A' },
       { id: 'crypto:BTCUSDT', venue: 'crypto', symbol: 'BTCUSDT', label: 'BTC', name: 'Bitcoin' },
       { id: 'crypto:ETHUSDT', venue: 'crypto', symbol: 'ETHUSDT', label: 'ETH', name: 'Ethereum' },
       { id: 'crypto:SOLUSDT', venue: 'crypto', symbol: 'SOLUSDT', label: 'SOL', name: 'Solana' },
@@ -114,10 +124,16 @@ describe('ticker notes', () => {
     expect(isRestricted(await resolveNote('please DOGE', search, async () => null, restricted))).toBe(true)
     expect(isRestricted(await resolveNote('crypto:DOGE', search, async () => null, restricted))).toBe(true)
     expect(await id('XRP')).toBe('crypto:XRPUSDC')
-    expect(await id('$BTC')).toBe('stock:BTC')
-    expect(await id('$DOGE')).toBe('stock:DOGE')
-    expect(await id('stock:DOGE')).toBe('stock:DOGE')
-    expect(await id('stock:ETH')).toBe('stock:ETH')
+    expect(await id('stock:NVDA')).toBe('stock:NVDA')
+    expect(await id('COIN')).toBe('stock:COIN')
+    expect(await id('ABTC')).toBe('stock:ABTC')
+    expect(await id('BIXI')).toBe('stock:BIXI')
+    expect(await id('MSTR')).toBe('stock:MSTR')
+    expect(await resolveNote('$BTC', search, async () => null, restricted)).toEqual({ restricted: true, stock: true })
+    expect(await resolveNote('$DOGE', search, async () => null, restricted)).toEqual({ restricted: true, stock: true })
+    expect(await resolveNote('stock:DOGE', search, async () => null, restricted)).toEqual({ restricted: true, stock: true })
+    expect(await resolveNote('stock:ETH', search, async () => null, restricted)).toEqual({ restricted: true, stock: true })
+    expect(await resolveNote('IBIT', search, async () => null, restricted)).toEqual({ restricted: true, stock: true })
     expect(await resolveNote('BTC-PERP', search, async () => null, restricted)).toBeNull()
     expect(await resolveNote('nope', search, async () => null, restricted)).toBeNull()
     expect(await resolveNote('0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48', search, async () => null, restricted)).toBeNull()
@@ -240,7 +256,8 @@ describe('ingest', () => {
         activity: async () => ({ payments: rows, next: null }),
         resolve: async (note) => {
           if (note === 'DOGE' || note === 'Dogecoin') return { restricted: true }
-          if (note === '$DOGE') return { id: 'stock:DOGE', venue: 'stock', symbol: 'DOGE', label: 'DOGE', name: 'Dogecoin Trust' }
+          if (note === '$DOGE' || note === 'IBIT') return { restricted: true, stock: true }
+          if (note === 'NVDA') return { id: 'stock:NVDA', venue: 'stock', symbol: 'NVDA', label: 'NVDA', name: 'NVIDIA' }
           return null
         },
         quote: async () => 25,
@@ -249,14 +266,21 @@ describe('ingest', () => {
         },
       })
     await run([payment('1', 'OLD')])
-    const result = await run([payment('1', 'OLD'), payment('2', 'DOGE'), payment('3', 'ZZZZ'), payment('4', '$DOGE', 1000)])
-    expect(result.refunded).toBe(2)
+    const result = await run([
+      payment('1', 'OLD'),
+      payment('2', 'DOGE'),
+      payment('3', 'ZZZZ'),
+      payment('4', '$DOGE', 1000),
+      payment('5', 'IBIT', 1000),
+      payment('6', 'NVDA', 1000),
+    ])
+    expect(result.refunded).toBe(4)
     expect(result.filled).toBe(1)
-    expect(notes).toEqual([RESTRICTED_NOTE, REFUND_NOTE])
-    expect((await ledger.payment('2'))?.status).toBe('refunded')
+    expect(notes).toEqual([RESTRICTED_NOTE, REFUND_NOTE, RESTRICTED_STOCK_NOTE, RESTRICTED_STOCK_NOTE])
     expect((await ledger.payment('2'))?.detail).toBe('restricted')
+    expect((await ledger.payment('4'))?.detail).toBe('restricted')
     expect((await ledger.payment('3'))?.detail).toBe('refunded')
-    expect((await ledger.positions()).map((position) => position.symbol)).toEqual(['DOGE'])
+    expect((await ledger.positions()).map((position) => position.symbol)).toEqual(['NVDA'])
     expect(await ledger.vaultCents('ada')).toBe(0)
   })
 

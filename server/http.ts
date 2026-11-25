@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { fileBuy, fileClose, samePerson, type Person } from './book.ts'
-import { getCandles, getQuotes, isInterval, isRestrictedCoin, parseId, searchMarket } from './market.ts'
+import { getCandles, getQuotes, isCryptoStock, isInterval, isRestrictedCoin, parseId, searchMarket } from './market.ts'
 import { cashOut } from './close.ts'
 import { withdrawCash } from './withdraw.ts'
 import { payoutCents } from './payout.ts'
@@ -76,7 +76,8 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse): Prom
         send(res, 400, { error: 'bad_venue' })
         return
       }
-      send(res, 200, { hits: await searchMarket(venue, url.searchParams.get('q') ?? '') })
+      const hits = await searchMarket(venue, url.searchParams.get('q') ?? '')
+      send(res, 200, { hits: venue === 'stock' ? hits.filter((hit) => !isCryptoStock(hit.name, hit.symbol)) : hits })
       return
     }
     if (url.pathname === '/api/xitter/users') {
@@ -290,6 +291,10 @@ async function openPosition(req: IncomingMessage, res: ServerResponse) {
   const [quote] = parsed.venue === 'launch' ? [await ledger.launchQuote(parsed.symbol)] : await getQuotes([id])
   if (!quote || !(quote.price > 0)) {
     send(res, 502, { error: 'no_price' })
+    return
+  }
+  if (parsed.venue === 'stock' && isCryptoStock(quote.name || '', parsed.symbol)) {
+    send(res, 400, { error: 'restricted', message: "That stock isn't available." })
     return
   }
   await ledger.updateBook((positions) =>

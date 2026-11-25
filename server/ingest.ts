@@ -16,7 +16,7 @@ import {
   type MentionPost,
 } from './money.ts'
 import { deskKey } from './padding.ts'
-import { isDonationNote, isRefundNote, isRestricted, isVaultNote, REFUND_NOTE, RESTRICTED_NOTE, resolveNote, type RestrictedHit } from './resolve.ts'
+import { isDonationNote, isRefundNote, isRestricted, isVaultNote, REFUND_NOTE, RESTRICTED_NOTE, RESTRICTED_STOCK_NOTE, resolveNote, type RestrictedHit } from './resolve.ts'
 import { store as openLedger, type PaymentRow, type Store } from './store.ts'
 import type { Mention } from './tag.ts'
 
@@ -136,12 +136,18 @@ async function settle(deps: Deps, desk: Desk, draft: PaymentRow, sender: Person)
   }
   let listing = storedListing(draft.detail)
   let restricted = false
-  if (!listing || listing.venue === 'crypto') {
-    const found = await deps.resolve(draft.note)
-    if (isRestricted(found)) {
-      restricted = true
-      listing = null
-    } else if (!listing && found) listing = found
+  let restrictedStock = false
+  if (!listing || listing.venue === 'crypto' || listing.venue === 'stock') {
+    try {
+      const found = await deps.resolve(draft.note)
+      if (isRestricted(found)) {
+        restricted = true
+        restrictedStock = !!found.stock
+        listing = null
+      } else if (!listing && found) listing = found
+    } catch (error) {
+      if (!listing) throw error
+    }
   }
   if (listing?.venue === 'launch') {
     try {
@@ -154,7 +160,8 @@ async function settle(deps: Deps, desk: Desk, draft: PaymentRow, sender: Person)
     listing = null
   }
   if (restricted || !listing || listing.venue === 'perpetual') {
-    return refundPayment(deps, desk, draft, sender, restricted ? RESTRICTED_NOTE : REFUND_NOTE)
+    const note = restrictedStock ? RESTRICTED_STOCK_NOTE : restricted ? RESTRICTED_NOTE : REFUND_NOTE
+    return refundPayment(deps, desk, draft, sender, note)
   }
   const price = await deps.quote(listing.id)
   if (!(price && price > 0)) {
@@ -191,7 +198,7 @@ async function refundPayment(
     await deps.store.finishPayment({
       ...draft,
       status: 'refunded',
-      detail: note === RESTRICTED_NOTE ? 'restricted' : 'refunded',
+      detail: note === REFUND_NOTE ? 'refunded' : 'restricted',
       updatedAt: deps.now,
     })
     return 'refunded'
@@ -210,6 +217,17 @@ function heldCrypto(positions: Position[], screenName: string, query: string): P
     return spotBase(position.symbol) === wanted || position.label.toLowerCase() === name || position.name.toLowerCase() === name
   })
   return hits.find((position) => position.symbol.toUpperCase().endsWith('USDT')) ?? hits[0] ?? null
+}
+
+function heldStock(positions: Position[], screenName: string, query: string): Position | null {
+  const wanted = query.trim().replace(/^[$#]/, '').replace(/^stock:/i, '').toUpperCase()
+  const name = query.trim().toLowerCase().replace(/^[$#]/, '')
+  return (
+    positions.find((position) => {
+      if (position.venue !== 'stock' || !samePerson(position.person.screenName, screenName)) return false
+      return position.symbol.toUpperCase() === wanted || position.label.toUpperCase() === wanted || position.name.toLowerCase() === name
+    }) ?? null
+  )
 }
 
 function storedListing(detail: string): Listing | null {
@@ -348,6 +366,7 @@ async function settlePost(
   let listing: Listing | null = null
   let price: number | null = null
   let restricted = false
+  let restrictedStock = false
   if (command.kind !== 'withdraw') {
     let found: Listing | RestrictedHit | null = null
     try {
@@ -357,8 +376,10 @@ async function settlePost(
       return 0
     }
     if (isRestricted(found)) {
+      restrictedStock = !!found.stock
       if (command.kind === 'sell') {
-        const held = heldCrypto(await deps.store.positions(), screenName, command.query)
+        const positions = await deps.store.positions()
+        const held = found.stock ? heldStock(positions, screenName, command.query) : heldCrypto(positions, screenName, command.query)
         if (held) listing = { id: `${held.venue}:${held.symbol}`, venue: held.venue, symbol: held.symbol, name: held.name, label: held.label }
         else restricted = true
       } else restricted = true
@@ -396,6 +417,7 @@ async function settlePost(
     price,
     sendRoom,
     restricted,
+    restrictedStock,
     now: deps.now,
   })
   if (result.action === 'reply') {

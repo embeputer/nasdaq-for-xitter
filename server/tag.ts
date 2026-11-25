@@ -52,6 +52,7 @@ export type TagInput = {
   price: number | null
   sendRoom: number | null
   restricted?: boolean
+  restrictedStock?: boolean
   now: number
 }
 
@@ -71,7 +72,7 @@ export function decideTag(doc: TradeDoc, input: TagInput): TagResult {
     return { action: 'idle' }
   }
   if (input.command.kind === 'withdraw') return withdraw(doc, input, input.command.cents)
-  if (input.restricted) return reply(doc, input, REPLIES.restricted, 0)
+  if (input.restricted) return reply(doc, input, input.restrictedStock ? REPLIES.restrictedStock : REPLIES.restricted, 0)
   if (!input.listing || input.listing.venue === 'perpetual') return reply(doc, input, REPLIES.unresolved, 0)
   if (input.command.kind === 'sell') return sell(doc, input, input.listing)
   return buy(doc, input, input.listing, input.command.cents)

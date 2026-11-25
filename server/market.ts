@@ -747,6 +747,16 @@ const COINS_WITH_EQUITY_SUFFIX = new Set([
   'ZRX',
 ])
 
+const CRYPTO_STOCK_COIN =
+  /\b(bitcoin|btc|ethereum|ether|solana|dogecoin|doge|litecoin|ripple|cardano|polkadot|avalanche|chainlink|stellar|crypto(?:currency)?|binance|shiba|pepe|bonk|uniswap|aave|polygon|tron|cosmos|toncoin|aptos|sui|xrp|avax|bnb)\b/i
+
+const CRYPTO_STOCK_WRAPPER = /\b(etfs?|etns?|etps?|trust|funds?)\b/i
+
+/** A stock or ETF that tracks a coin, not a company that works in crypto. */
+export function isCryptoStock(name: string, symbol = ''): boolean {
+  return CRYPTO_STOCK_COIN.test(`${name} ${symbol}`) && CRYPTO_STOCK_WRAPPER.test(name)
+}
+
 export function isTokenizedEquityBase(base: string): boolean {
   const asset = base.trim().toUpperCase()
   if (!asset || COINS_WITH_EQUITY_SUFFIX.has(asset)) return false

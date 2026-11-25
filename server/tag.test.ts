@@ -3,7 +3,7 @@ import { fileClose } from './book.ts'
 import { REPLIES, parseCommand, withdrawKey } from './commands.ts'
 import { ingest } from './ingest.ts'
 import type { Listing } from './market.ts'
-import { RESTRICTED_NOTE, type RestrictedHit } from './resolve.ts'
+import { RESTRICTED_NOTE, RESTRICTED_STOCK_NOTE, type RestrictedHit } from './resolve.ts'
 import { parseMentions } from './money.ts'
 import { memoryStore, type PaymentRow } from './store.ts'
 import { addScore, ensureScores, type TagInput, type TradeDoc } from './tag.ts'
@@ -92,6 +92,13 @@ describe('tag commands', () => {
     const denied = await ledger.applyTag({ ...order('m', { kind: 'buy', query: 'DOGE', cents: 100 }, null, null, null), restricted: true })
     expect(denied).toEqual({ action: 'reply', text: REPLIES.restricted })
     expect(REPLIES.restricted).toBe(RESTRICTED_NOTE)
+    const stock = await ledger.applyTag({
+      ...order('b', { kind: 'buy', query: 'IBIT', cents: 100 }, null, null, null),
+      restricted: true,
+      restrictedStock: true,
+    })
+    expect(stock).toEqual({ action: 'reply', text: REPLIES.restrictedStock })
+    expect(REPLIES.restrictedStock).toBe(RESTRICTED_STOCK_NOTE)
     expect(await ledger.vaultDesk('z1xus', 'nasdaq')).toBe(50)
     expect(await ledger.positions()).toEqual([])
     const none = await ledger.applyTag(order('s', { kind: 'sell', query: 'NVDA' }, nvda, 10, null))
@@ -314,6 +321,40 @@ describe('tag ingest', () => {
       },
     })
     expect(quoted).toEqual(['crypto:DOGEUSDT'])
+    expect(sold.replies).toEqual([REPLIES.closed])
+    expect(await ledger.positions()).toEqual([])
+    expect(await ledger.vaultDesk('z1xus', 'nasdaq')).toBe(11_200)
+  })
+
+  it('refuses a bitcoin trust and still closes one already held', async () => {
+    const ledger = await book()
+    await ledger.setMeta('mentions-ready:nasdaq', '1')
+    await ledger.setMeta('padding:nasdaq', '5000')
+    await ledger.fillPayment(pay('buy', 'nasdaq', 1000), {
+      venue: 'stock',
+      symbol: 'BTC',
+      name: 'Grayscale Bitcoin Mini Trust ETF',
+      label: 'BTC',
+      person,
+      amount: 10,
+      price: 10,
+      now: 1,
+    })
+    const denied = await run(ledger, [{ id: 'ibit', text: '@nasdaq buy $BTC 5' }], {
+      resolve: async () => ({ restricted: true, stock: true }),
+    })
+    expect(denied.replies).toEqual([REPLIES.restrictedStock])
+    expect(await ledger.vaultDesk('z1xus', 'nasdaq')).toBe(10_000)
+    expect((await ledger.positions())[0]?.symbol).toBe('BTC')
+    const quoted: string[] = []
+    const sold = await run(ledger, [{ id: 'sell-btc', text: '@nasdaq sell $BTC' }], {
+      resolve: async () => ({ restricted: true, stock: true }),
+      quote: async (id) => {
+        quoted.push(id)
+        return 12
+      },
+    })
+    expect(quoted).toEqual(['stock:BTC'])
     expect(sold.replies).toEqual([REPLIES.closed])
     expect(await ledger.positions()).toEqual([])
     expect(await ledger.vaultDesk('z1xus', 'nasdaq')).toBe(11_200)

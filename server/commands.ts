@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { RESTRICTED_NOTE } from './resolve.ts'
+import { RESTRICTED_NOTE, RESTRICTED_STOCK_NOTE } from './resolve.ts'
 
 export const REPLIES = {
   opened: 'your order has been successfully opened',
@@ -7,6 +7,7 @@ export const REPLIES = {
   withdrawn: 'your withdrawal has been sent',
   unresolved: 'Sorry, that didnt resolve',
   restricted: RESTRICTED_NOTE,
+  restrictedStock: RESTRICTED_STOCK_NOTE,
   poor: 'Seems like your vault is short on cash for that.... Send equicoins to this account with "vault" in the note to deposit money into your vault',
   missing: "Seems like that asset isn't something you own.... Did you write it correctly?",
   short: 'Sorry, seems like the NQFX fund is a bit short right now... Tagging @ember to help you',

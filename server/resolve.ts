@@ -1,15 +1,17 @@
-import { searchMarket, type Listing, type Venue } from './market.ts'
+import { isCryptoStock, searchMarket, type Listing, type Venue } from './market.ts'
 
 export const REFUND_NOTE =
   'Sorry, i couldn\'t find that! Make sure you specify an available stock or crypto market. If donating, enter "donate" in the note.'
 
 export const RESTRICTED_NOTE = "Sorry, that coin isn't available."
 
+export const RESTRICTED_STOCK_NOTE = "Sorry, that stock isn't available."
+
 const PREVIOUS_REFUND_NOTES = [
   'Sorry, i couldn\'t find that! Make sure you specify an available stock, crypto, or perpetual market. If donating, enter "donate" in the note.',
 ]
 
-export type RestrictedHit = { restricted: true }
+export type RestrictedHit = { restricted: true; stock?: true }
 
 export function isRestricted(hit: Listing | RestrictedHit | null): hit is RestrictedHit {
   return !!hit && 'restricted' in hit
@@ -17,7 +19,7 @@ export function isRestricted(hit: Listing | RestrictedHit | null): hit is Restri
 
 export function isRefundNote(note: string): boolean {
   const text = note.trim()
-  return text === REFUND_NOTE || text === RESTRICTED_NOTE || PREVIOUS_REFUND_NOTES.includes(text)
+  return text === REFUND_NOTE || text === RESTRICTED_NOTE || text === RESTRICTED_STOCK_NOTE || PREVIOUS_REFUND_NOTES.includes(text)
 }
 
 const DONATION = new Set([
@@ -212,7 +214,7 @@ export async function resolveNote(
   const raw = note.trim()
   if (!raw || isRefundNote(raw)) return null
   const queries = queriesFromNote(raw)
-  // $DOGE and stock:DOGE stay on the stock. A bare ticker can still be refused.
+  // A cashtag skips the coin check. The stock it finds can still be a coin trust.
   if (!queries.some((item) => item.venue === 'stock') && (await restricted(raw))) return { restricted: true }
   for (const item of queries) {
     if (item.venue === 'launch') {
@@ -222,6 +224,7 @@ export async function resolveNote(
     }
     if (item.venue !== 'stock' && (await restricted(item.query))) return { restricted: true }
     const found = await resolveQuery(item, search)
+    if (found?.venue === 'stock' && isCryptoStock(found.name, found.symbol)) return { restricted: true, stock: true }
     if (found) return found
   }
   return null
