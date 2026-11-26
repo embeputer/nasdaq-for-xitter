@@ -111,7 +111,7 @@ describe('ticker notes', () => {
       { id: 'crypto:ETHUSDT', venue: 'crypto', symbol: 'ETHUSDT', label: 'ETH', name: 'Ethereum' },
       { id: 'crypto:SOLUSDT', venue: 'crypto', symbol: 'SOLUSDT', label: 'SOL', name: 'Solana' },
       { id: 'crypto:DOGEUSDT', venue: 'crypto', symbol: 'DOGEUSDT', label: 'DOGE', name: 'Dogecoin' },
-      { id: 'crypto:XRPUSDC', venue: 'crypto', symbol: 'XRPUSDC', label: 'XRP-USDC', name: 'XRP' },
+      { id: 'crypto:XRPUSDT', venue: 'crypto', symbol: 'XRPUSDT', label: 'XRP', name: 'XRP' },
       { id: 'perpetual:BTC', venue: 'perpetual', symbol: 'BTC', label: 'BTC-PERP', name: 'BTC' },
     ]
     const search = async (venue: Listing['venue'], query: string) =>
@@ -134,7 +134,7 @@ describe('ticker notes', () => {
     expect(isRestricted(await resolveNote('crypto:DOGE', search, async () => null, restricted))).toBe(true)
     expect(isRestricted(await resolveNote('SUI', search, async () => null, restricted))).toBe(true)
     expect(isRestricted(await resolveNote('crypto:DASH', search, async () => null, restricted))).toBe(true)
-    expect(await id('XRP')).toBe('crypto:XRPUSDC')
+    expect(await id('XRP')).toBe('crypto:XRPUSDT')
     expect(await id('stock:NVDA')).toBe('stock:NVDA')
     expect(await id('COIN')).toBe('stock:COIN')
     expect(await id('ABTC')).toBe('stock:ABTC')

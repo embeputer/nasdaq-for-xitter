@@ -854,10 +854,10 @@ export function spotListings(rows: SpotRow[], book: CoinBook): Listing[] {
   return rows
     .flatMap((row) => {
       if (row.status !== 'TRADING' || !row.symbol || !row.baseAsset) return []
-      if (row.quoteAsset !== 'USDT' && row.quoteAsset !== 'USDC') return []
+      if (row.quoteAsset !== 'USDT') return []
       const base = row.baseAsset.toUpperCase()
       if (!ALLOWED_CRYPTO.has(base) || isTokenizedEquityBase(base) || book.memes.has(base)) return []
-      const label = row.quoteAsset === 'USDC' ? `${row.baseAsset}-USDC` : row.baseAsset
+      const label = row.baseAsset
       const name = book.names.get(base) || row.baseAsset
       return [listing('crypto', row.symbol, name, label)]
     })

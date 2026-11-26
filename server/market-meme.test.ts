@@ -76,7 +76,6 @@ describe('restricted crypto allowlist', () => {
       'AVAXUSDT',
       'BNBUSDT',
       'BTCUSDT',
-      'ETHUSDC',
       'LINKUSDT',
       'LTCUSDT',
       'SOLUSDT',
